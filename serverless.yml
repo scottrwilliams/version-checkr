@@ -1,0 +1,39 @@
+service: versioncheckr
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  stage: dev
+  region: us-east-1
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:GetObject"
+      Resource:
+          Fn::Join:
+            - ""
+            - - "arn:aws:s3:::"
+              - "Ref" : "configBucket"
+              - "/*"
+
+functions:
+  versioncheckr:
+    handler: versioncheckr.handler
+    memory: 128
+    environment:
+      PEM_BUCKET_NAME:
+        Ref: "configBucket"
+      PEM_KEY: "key.pem"
+      APP_ID: ${opt:app_id}
+      WEBHOOK_SECRET: ${opt:webhook_secret}
+    events:
+      - http:
+          method: post
+          path: versioncheckr
+
+resources:
+  Resources:
+    configBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: versioncheckr-cfg
