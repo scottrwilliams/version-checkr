@@ -6,8 +6,19 @@ const GitHubApi = require('github'),
       semver = require('semver'),
       crypto = require('crypto');
 
+function validateSignature(body, xHubSignature) {
+
+  const hmac = crypto.createHmac('sha1', process.env.WEBHOOK_SECRET);
+  const bodySig = `sha1=${hmac.update(body).digest('hex')}`;
+  const bufferBodySig = Buffer.from(bodySig, 'utf8');
+  const bufferXHubSig = Buffer.from(xHubSignature, 'utf8');
+
+  return crypto.timingSafeEqual(bufferBodySig, bufferXHubSig);
+}
+
 let privateKeyCached;
 function getPrivateKey () {
+
   if (privateKeyCached === undefined) {
     const s3 = new AWS.S3();
     return s3.getObject({
@@ -95,23 +106,13 @@ module.exports.handler = (event, context, callback) => {
     return callback(null, {statusCode: 202});
   }
 
-  const hmac = crypto.createHmac('sha1', process.env.WEBHOOK_SECRET);
-  const ourSig = `sha1=${hmac.update(event.body).digest('hex')}`;
-  const theirSig = event.headers['X-Hub-Signature'];
-  const bufferOurs = Buffer.from(ourSig, 'utf8');
-  const bufferTheirs = Buffer.from(theirSig, 'utf8');
-
-  if( !crypto.timingSafeEqual(bufferOurs, bufferTheirs) ){
-    return callback(
-      null,
-      {
+  if( !validateSignature(event.body, event.headers['X-Hub-Signature']) ){
+    return callback( null, {
         statusCode: 400,
         body: "Invalid X-Hub-Signature"
-      }
-    );
+      });
   }
 
-  //const action = pullRequest.action;
   const installationId = pullRequest.installation.id;
   const owner = pullRequest.repository.owner.login;
   const repo = pullRequest.repository.name;
@@ -126,5 +127,4 @@ module.exports.handler = (event, context, callback) => {
   .catch(err => {
     callback(err);
   });
-
 };
