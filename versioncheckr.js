@@ -16,24 +16,16 @@ function validateSignature(body, xHubSignature) {
   return crypto.timingSafeEqual(bufferBodySig, bufferXHubSig);
 }
 
-let privateKeyCached;
-function getPrivateKey () {
+const privateKey = (() => {
 
-  if (privateKeyCached === undefined) {
     const s3 = new AWS.S3();
     return s3.getObject({
       Bucket: process.env.PEM_BUCKET_NAME,
       Key: process.env.PEM_KEY
     })
     .promise()
-    .then( file => {
-      privateKeyCached = file.Body.toString('utf8');
-      return privateKeyCached;
-    });
-  } else {
-    return Promise.resolve(privateKeyCached);
-  }
-}
+    .then( file => file.Body.toString('utf8') );
+})();
 
 function gitHubAuthenticate (appId, cert, installationId) {
 
@@ -101,9 +93,11 @@ module.exports.handler = (event, context, callback) => {
 
   const githubEvent = event.headers['X-GitHub-Event'];
   const pullRequest = JSON.parse(event.body);
-
   if (githubEvent !== 'pull_request' || !( pullRequest.action === 'opened' || pullRequest.action === 'reopened' || pullRequest.action === 'synchronize' ) ) {
-    return callback(null, {statusCode: 202});
+    return callback( null, {
+        statusCode: 202,
+        body: "No action to take"
+      });
   }
 
   if( !validateSignature(event.body, event.headers['X-Hub-Signature']) ){
@@ -119,7 +113,7 @@ module.exports.handler = (event, context, callback) => {
   const newRef = pullRequest.pull_request.head.ref;
   const sha = pullRequest.pull_request.head.sha;
 
-  getPrivateKey()
+  Promise.resolve( privateKey )
   .then( privateKey => gitHubAuthenticate(process.env.APP_ID, privateKey, installationId) )
   .then( github => getFilesFromGitHub(github, owner, repo, newRef) )
   .then( res => postStatus(res.github, owner, repo, sha, res.oldVersion, res.newVersion) )
