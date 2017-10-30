@@ -42,7 +42,8 @@ function gitHubAuthenticate (appId, cert, installationId) {
           token: res.data.token
         });
         return github;
-    });
+    })
+    .catch(err => { throw new Error(JSON.stringify(err)); });
 }
 
 function getFilesFromGitHub (github, owner, repo, headRef, baseRef) {
@@ -62,20 +63,22 @@ function getFilesFromGitHub (github, owner, repo, headRef, baseRef) {
         github: github,
         oldVersion: JSON.parse(new Buffer(baseFile.data.content, 'base64')).version,
         newVersion: JSON.parse(new Buffer(headFile.data.content, 'base64')).version
-    }));
+    }))
+    .catch(err => { throw new Error(JSON.stringify(err)); });
 }
 
 function postStatus (github, owner, repo, sha, oldVersion, newVersion) {
   const isNewer = semver.gt(newVersion, oldVersion);
 
   return github.repos.createStatus({
-    owner: owner,
-    repo: repo,
-    sha: sha,
-    state: isNewer ? 'success' : 'failure',
-    description: isNewer ? `Version ${newVersion} will replace ${oldVersion}` : `Version ${newVersion} should be bumped greater than ${oldVersion}`,
-    context: 'Version Checkr'
-  });
+      owner: owner,
+      repo: repo,
+      sha: sha,
+      state: isNewer ? 'success' : 'failure',
+      description: isNewer ? `Version ${newVersion} will replace ${oldVersion}` : `Version ${newVersion} should be bumped greater than ${oldVersion}`,
+      context: 'Version Checkr'
+    })
+    .catch(err => { throw new Error(JSON.stringify(err)); });
 }
 
 module.exports.handler = (event, context, callback) => {
