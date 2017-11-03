@@ -38,10 +38,10 @@ function gitHubAuthenticate (appId, cert, installationId) {
   return github.apps.createInstallationToken({installation_id: installationId})
     .then(res => {
       github.authenticate({
-          type: 'token',
-          token: res.data.token
-        });
-        return github;
+        type: 'token',
+        token: res.data.token
+      });
+      return github;
     })
     .catch(err => { throw new Error(JSON.stringify(err)); });
 }
