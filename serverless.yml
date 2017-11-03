@@ -16,6 +16,17 @@ provider:
               - "Ref" : "configBucket"
               - "/*"
 
+package:
+  exclude:
+    - ".editorconfig"
+    - ".eslintignore"
+    - ".eslintrc"
+    - "LICENSE"
+    - "README.md"
+    - ".nyc_output/**"
+    - "coverage/**"
+    - "test/**"
+
 functions:
   versioncheckr:
     handler: versioncheckr.handler
