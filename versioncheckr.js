@@ -37,11 +37,11 @@ function gitHubAuthenticate (appId, cert, installationId) {
 
   return github.apps.createInstallationToken({installation_id: installationId})
     .then(res => {
-        github.authenticate({
-          type: 'token',
-          token: res.data.token
-        });
-        return github;
+      github.authenticate({
+        type: 'token',
+        token: res.data.token
+      });
+      return github;
     })
     .catch(err => { throw new Error(JSON.stringify(err)); });
 }
@@ -82,7 +82,6 @@ function postStatus (github, owner, repo, sha, oldVersion, newVersion) {
 }
 
 module.exports.handler = (event, context, callback) => {
-  console.log(event.body);
 
   const githubEvent = event.headers['X-GitHub-Event'];
   if (!githubEvent) {
@@ -94,7 +93,14 @@ module.exports.handler = (event, context, callback) => {
   }
 
   var sig = event.headers['X-Hub-Signature'];
-  if (!sig || !validateSignature(event.body, sig)) {
+  if (!sig) {
+    return callback( null, {
+        statusCode: 400,
+        headers: { 'Content-Type': 'text/plain' },
+        body: 'Missing X-Hub-Signature'
+      });
+  }
+  if (!validateSignature(event.body, sig)) {
     return callback( null, {
         statusCode: 400,
         headers: { 'Content-Type': 'text/plain' },
@@ -123,6 +129,10 @@ module.exports.handler = (event, context, callback) => {
     .then( privateKey => gitHubAuthenticate(process.env.APP_ID, privateKey, installationId) )
     .then( github => getFilesFromGitHub(github, owner, repo, headRef, baseRef) )
     .then( res => postStatus(res.github, owner, repo, sha, res.oldVersion, res.newVersion) )
-    .then( () => callback(null, { statusCode: 204 }) )
+    .then( res => callback( null, {
+        statusCode: 200,
+        headers: { 'Content-Type': 'text/plain' },
+        body: res.data.description
+      }))
     .catch( err => { callback(err); } );
 };
