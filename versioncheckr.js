@@ -77,13 +77,15 @@ function getFilesFromGitHub(github, owner, repo, headRef, baseRef) {
 
 function postStatus(github, owner, repo, sha, oldVersion, newVersion) {
   const isNewer = semver.gt(newVersion, oldVersion);
+  const description = isNewer ?
+    `Version ${newVersion} will replace ${oldVersion}` : `Version ${newVersion} should be bumped greater than ${oldVersion}`;
 
   return github.repos.createStatus({
       owner: owner,
       repo: repo,
       sha: sha,
       state: isNewer ? 'success' : 'failure',
-      description: isNewer ? `Version ${newVersion} will replace ${oldVersion}` : `Version ${newVersion} should be bumped greater than ${oldVersion}`,
+      description: description,
       context: 'Version Checkr'
     })
     .catch(err => {
@@ -91,49 +93,36 @@ function postStatus(github, owner, repo, sha, oldVersion, newVersion) {
     });
 }
 
+function createResponse(statusCode, msg) {
+  return {
+    statusCode: statusCode,
+    headers: {
+      'Content-Type': 'text/plain'
+    },
+    body: msg
+  };
+}
+
 module.exports.handler = (event, context, callback) => {
 
   const githubEvent = event.headers['X-GitHub-Event'];
   if (!githubEvent) {
-    return callback(null, {
-      statusCode: 400,
-      headers: {
-        'Content-Type': 'text/plain'
-      },
-      body: 'Missing X-GitHub-Event'
-    });
+    return callback(null, createResponse(400, 'Missing X-GitHub-Event'));
   }
 
   var sig = event.headers['X-Hub-Signature'];
   if (!sig) {
-    return callback(null, {
-      statusCode: 400,
-      headers: {
-        'Content-Type': 'text/plain'
-      },
-      body: 'Missing X-Hub-Signature'
-    });
+    return callback(null, createResponse(400, 'Missing X-Hub-Signature'));
   }
   if (!validateSignature(event.body, sig)) {
-    return callback(null, {
-      statusCode: 400,
-      headers: {
-        'Content-Type': 'text/plain'
-      },
-      body: 'Invalid X-Hub-Signature'
-    });
+    return callback(null, createResponse(400, 'Invalid X-Hub-Signature'));
   }
 
   const pullRequest = JSON.parse(event.body);
 
-  if (githubEvent !== 'pull_request' || !(pullRequest.action === 'opened' || pullRequest.action === 'reopened' || pullRequest.action === 'synchronize')) {
-    return callback(null, {
-      statusCode: 202,
-      headers: {
-        'Content-Type': 'text/plain'
-      },
-      body: 'No action to take'
-    });
+  if (githubEvent !== 'pull_request' ||
+    !(pullRequest.action === 'opened' || pullRequest.action === 'reopened' || pullRequest.action === 'synchronize')) {
+    return callback(null, createResponse(202, 'No action to take'));
   }
 
   const installationId = pullRequest.installation.id;
@@ -147,14 +136,6 @@ module.exports.handler = (event, context, callback) => {
     .then(privateKey => gitHubAuthenticate(process.env.APP_ID, privateKey, installationId))
     .then(github => getFilesFromGitHub(github, owner, repo, headRef, baseRef))
     .then(res => postStatus(res.github, owner, repo, sha, res.oldVersion, res.newVersion))
-    .then(res => callback(null, {
-      statusCode: 200,
-      headers: {
-        'Content-Type': 'text/plain'
-      },
-      body: res.data.description
-    }))
-    .catch(err => {
-      callback(err);
-    });
+    .then(res => callback(null, createResponse(200, res.data.description)))
+    .catch(err => callback(err));
 };

@@ -94,6 +94,12 @@ beforeEach(() => {
   process.env.WEBHOOK_SECRET = 'password';
 });
 
+//since versioncheckr uses promises that aren't returned to the caller
+//https://github.com/mochajs/mocha/issues/2797
+process.on('unhandledRejection', e => {
+  throw e;
+});
+
 describe('versioncheckr', () => {
 
   it(`Missing X-GitHub-Event`, (done) => {
@@ -101,15 +107,11 @@ describe('versioncheckr', () => {
     delete gitHubEvent.headers['X-GitHub-Event'];
 
     myLambda.handler(gitHubEvent, {}, (err, result) => {
-      try {
-        expect(err).to.not.exist;
-        expect(result).to.exist;
-        expect(result.statusCode).to.equal(400);
-        expect(result.body).to.equal('Missing X-GitHub-Event');
-        done();
-      } catch (error) {
-        done(error);
-      }
+      expect(err).to.not.exist;
+      expect(result).to.exist;
+      expect(result.statusCode).to.equal(400);
+      expect(result.body).to.equal('Missing X-GitHub-Event');
+      done();
     });
   });
 
@@ -118,15 +120,11 @@ describe('versioncheckr', () => {
     delete gitHubEvent.headers['X-Hub-Signature'];
 
     myLambda.handler(gitHubEvent, {}, (err, result) => {
-      try {
-        expect(err).to.not.exist;
-        expect(result).to.exist;
-        expect(result.statusCode).to.equal(400);
-        expect(result.body).to.equal('Missing X-Hub-Signature');
-        done();
-      } catch (error) {
-        done(error);
-      }
+      expect(err).to.not.exist;
+      expect(result).to.exist;
+      expect(result.statusCode).to.equal(400);
+      expect(result.body).to.equal('Missing X-Hub-Signature');
+      done();
     });
   });
 
@@ -139,15 +137,11 @@ describe('versioncheckr', () => {
     gitHubEvent.headers['X-Hub-Signature'] = `sha1=${hash}`;
 
     myLambda.handler(gitHubEvent, {}, (err, result) => {
-      try {
-        expect(err).to.not.exist;
-        expect(result).to.exist;
-        expect(result.statusCode).to.equal(400);
-        expect(result.body).to.equal('Invalid X-Hub-Signature');
-        done();
-      } catch (error) {
-        done(error);
-      }
+      expect(err).to.not.exist;
+      expect(result).to.exist;
+      expect(result.statusCode).to.equal(400);
+      expect(result.body).to.equal('Invalid X-Hub-Signature');
+      done();
     });
   });
 
@@ -159,15 +153,11 @@ describe('versioncheckr', () => {
     gitHubEvent.headers['X-Hub-Signature'] = `sha1=${hash}`;
 
     myLambda.handler(gitHubEvent, {}, (err, result) => {
-      try {
-        expect(err).to.not.exist;
-        expect(result).to.exist;
-        expect(result.statusCode).to.equal(400);
-        expect(result.body).to.equal('Invalid X-Hub-Signature');
-        done();
-      } catch (error) {
-        done(error);
-      }
+      expect(err).to.not.exist;
+      expect(result).to.exist;
+      expect(result.statusCode).to.equal(400);
+      expect(result.body).to.equal('Invalid X-Hub-Signature');
+      done();
     });
   });
 
@@ -179,15 +169,11 @@ describe('versioncheckr', () => {
     gitHubEvent.headers['X-Hub-Signature'] = `sha1=${hash}`;
 
     myLambda.handler(gitHubEvent, {}, (err, result) => {
-      try {
-        expect(err).to.not.exist;
-        expect(result).to.exist;
-        expect(result.statusCode).to.not.equal(400);
-        expect(result.body).to.not.equal('Invalid X-Hub-Signature');
-        done();
-      } catch (error) {
-        done(error);
-      }
+      expect(err).to.not.exist;
+      expect(result).to.exist;
+      expect(result.statusCode).to.not.equal(400);
+      expect(result.body).to.not.equal('Invalid X-Hub-Signature');
+      done();
     });
   });
 
@@ -211,15 +197,11 @@ describe('versioncheckr', () => {
   ].forEach((data) => {
     it(`Ignore event=${data.event} with action=${data.action}`, (done) => {
       myLambda.handler(makeEvent(data.action, data.event), {}, (err, result) => {
-        try {
-          expect(err).to.not.exist;
-          expect(result).to.exist;
-          expect(result.statusCode).to.equal(202);
-          expect(result.body).to.equal('No action to take');
-          done();
-        } catch (error) {
-          done(error);
-        }
+        expect(err).to.not.exist;
+        expect(result).to.exist;
+        expect(result.statusCode).to.equal(202);
+        expect(result.body).to.equal('No action to take');
+        done();
       });
     });
   });
@@ -231,14 +213,10 @@ describe('versioncheckr', () => {
   ].forEach((gitHubAction) => {
     it(`Process pull request with action: type=${gitHubAction}`, (done) => {
       myLambda.handler(makeEvent(gitHubAction, 'pull_request'), {}, (err, result) => {
-        try {
-          expect(err).to.not.exist;
-          expect(result).to.exist;
-          expect(result.statusCode).to.equal(200);
-          done();
-        } catch (error) {
-          done(error);
-        }
+        expect(err).to.not.exist;
+        expect(result).to.exist;
+        expect(result.statusCode).to.equal(200);
+        done();
       });
     });
   });
@@ -246,67 +224,55 @@ describe('versioncheckr', () => {
   [
     {
       oldVersion: '1.0.0',
-      newVersion: '1.0.1'
+      newVersion: '1.0.1',
+      isVersionHigher: true
     },
     {
       oldVersion: '0.0.0',
-      newVersion: '1.0.0'
+      newVersion: '1.0.0',
+      isVersionHigher: true
     },
     {
       oldVersion: '1.0.0',
-      newVersion: '1.1.0'
+      newVersion: '1.1.0',
+      isVersionHigher: true
     },
     {
       oldVersion: '9.9.99',
-      newVersion: '10.0.0'
-    }
-  ].forEach((data) => {
-    it(`Version has been bumped: ${data.oldVersion} to ${data.newVersion}`, (done) => {
-      const event = makeEvent('opened', 'pull_request', data.oldVersion, data.newVersion);
-      myLambda.handler(event, {}, (err, result) => {
-        try {
-          expect(err).to.not.exist;
-          expect(result).to.exist;
-          expect(result.statusCode).to.equal(200);
-          expect(result.body).to.equal(`Version ${data.newVersion} will replace ${data.oldVersion}`);
-          done();
-        } catch (error) {
-          done(error);
-        }
-      });
-    });
-  });
-
-  [
-    {
-      oldVersion: '1.0.0',
-      newVersion: '1.0.0'
+      newVersion: '10.0.0',
+      isVersionHigher: true
     },
     {
       oldVersion: '1.0.0',
-      newVersion: '0.0.0'
+      newVersion: '1.0.0',
+      isVersionHigher: false
+    },
+    {
+      oldVersion: '1.0.0',
+      newVersion: '0.0.0',
+      isVersionHigher: false
     },
     {
       oldVersion: '1.0.1',
-      newVersion: '1.0.0'
+      newVersion: '1.0.0',
+      isVersionHigher: false
     },
     {
       oldVersion: '1.1.0',
-      newVersion: '1.0.9'
+      newVersion: '1.0.9',
+      isVersionHigher: false
     }
   ].forEach((data) => {
-    it(`Version not bumped: ${data.oldVersion} to ${data.newVersion}`, (done) => {
+    const msg = data.isVersionHigher ?
+      `Version ${data.newVersion} will replace ${data.oldVersion}` : `Version ${data.newVersion} should be bumped greater than ${data.oldVersion}`;
+    it(msg, (done) => {
       const event = makeEvent('opened', 'pull_request', data.oldVersion, data.newVersion);
       myLambda.handler(event, {}, (err, result) => {
-        try {
-          expect(err).to.not.exist;
-          expect(result).to.exist;
-          expect(result.statusCode).to.equal(200);
-          expect(result.body).to.equal(`Version ${data.newVersion} should be bumped greater than ${data.oldVersion}`);
-          done();
-        } catch (error) {
-          done(error);
-        }
+        expect(err).to.not.exist;
+        expect(result).to.exist;
+        expect(result.statusCode).to.equal(200);
+        expect(result.body).to.equal(msg);
+        done();
       });
     });
   });
