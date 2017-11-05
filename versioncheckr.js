@@ -110,7 +110,7 @@ module.exports.handler = (event, context, callback) => {
     return callback(null, createResponse(400, 'Missing X-GitHub-Event'));
   }
 
-  var sig = event.headers['X-Hub-Signature'];
+  const sig = event.headers['X-Hub-Signature'];
   if (!sig) {
     return callback(null, createResponse(400, 'Missing X-Hub-Signature'));
   }
