@@ -107,22 +107,22 @@ module.exports.handler = (event, context, callback) => {
 
   const githubEvent = event.headers['X-GitHub-Event'];
   if (!githubEvent) {
-    return callback(null, createResponse(400, 'Missing X-GitHub-Event'));
+    return Promise.resolve(callback(null, createResponse(400, 'Missing X-GitHub-Event')));
   }
 
   const sig = event.headers['X-Hub-Signature'];
   if (!sig) {
-    return callback(null, createResponse(400, 'Missing X-Hub-Signature'));
+    return Promise.resolve(callback(null, createResponse(400, 'Missing X-Hub-Signature')));
   }
   if (!validateSignature(event.body, sig)) {
-    return callback(null, createResponse(400, 'Invalid X-Hub-Signature'));
+    return Promise.resolve(callback(null, createResponse(400, 'Invalid X-Hub-Signature')));
   }
 
   const pullRequest = JSON.parse(event.body);
 
   if (githubEvent !== 'pull_request' ||
     !(pullRequest.action === 'opened' || pullRequest.action === 'reopened' || pullRequest.action === 'synchronize')) {
-    return callback(null, createResponse(202, 'No action to take'));
+    return Promise.resolve(callback(null, createResponse(202, 'No action to take')));
   }
 
   const installationId = pullRequest.installation.id;
@@ -132,7 +132,7 @@ module.exports.handler = (event, context, callback) => {
   const sha = pullRequest.pull_request.head.sha;
   const baseRef = pullRequest.pull_request.base.ref;
 
-  Promise.resolve(privateKey)
+  return Promise.resolve(privateKey)
     .then(privateKey => gitHubAuthenticate(process.env.APP_ID, privateKey, installationId))
     .then(github => getFilesFromGitHub(github, owner, repo, headRef, baseRef))
     .then(res => postStatus(res.github, owner, repo, sha, res.oldVersion, res.newVersion))
