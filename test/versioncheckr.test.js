@@ -2,52 +2,8 @@
 
 const crypto = require('crypto'),
   proxyquire = require('proxyquire'),
-  expect = require('chai').expect;
-
-class S3 {
-  constructor() {
-    this.getObject = () => ({
-      promise: () => Promise.resolve({
-        Body: 'cert'
-      })
-    });
-  }
-}
-
-class GitHubApi {
-  constructor() {
-    this.authenticate = () => {};
-    this.apps = {
-      createInstallationToken: () => Promise.resolve({
-        data: {
-          token: "1"
-        }
-      })
-    };
-    this.repos = {
-      getContent: (params) => Promise.resolve({
-        data: {
-          content: new Buffer(`{"version": "${params.ref }"}`).toString('base64')
-        }
-      }),
-      createStatus: (status) => Promise.resolve({
-        data: {
-          description: status.description
-        }
-      })
-    };
-  }
-}
-
-const myLambda = proxyquire('../versioncheckr', {
-  'aws-sdk': {
-    S3
-  },
-  'github': GitHubApi,
-  'jsonwebtoken': {
-    sign: () => {}
-  }
-});
+  expect = require('chai').expect,
+  sinon = require('sinon');
 
 function createHash(secret, body) {
   const hmac = crypto.createHmac('sha1', secret);
@@ -57,7 +13,7 @@ function createHash(secret, body) {
   return hmac.read();
 }
 
-function makeEvent(action, eventType, oldVersion = "1.0.0", newVersion = "1.0.0") {
+function makeEvent(action, eventType) {
   const body = {
     action: action,
     installation: {
@@ -69,11 +25,11 @@ function makeEvent(action, eventType, oldVersion = "1.0.0", newVersion = "1.0.0"
     },
     pull_request: {
       head: {
-        ref: newVersion, //cheat by passing version through ref since mocked GitHubApi uses it in getContent
+        ref: "branch",
         sha: "9049f1265b7d61be4a8904a9a27120d2064dab3b"
       },
       base: {
-        ref: oldVersion
+        ref: "master"
       }
     }
   };
@@ -90,45 +46,106 @@ function makeEvent(action, eventType, oldVersion = "1.0.0", newVersion = "1.0.0"
   };
 }
 
-beforeEach(() => {
-  process.env.WEBHOOK_SECRET = 'password';
-});
+function setVersion(getContentStub, oldVersion, newVersion) {
+  function createContent(version) {
+    return {
+      data: {
+        content: new Buffer(`{"version": "${version}"}`).toString('base64')
+      }
+    };
+  }
+  getContentStub.withArgs(sinon.match.has("ref", "master")).resolves(createContent(oldVersion));
+  getContentStub.withArgs(sinon.match.has("ref", "branch")).resolves(createContent(newVersion));
+}
 
-//since versioncheckr uses promises that aren't returned to the caller
-//https://github.com/mochajs/mocha/issues/2797
-process.on('unhandledRejection', e => {
-  throw e;
+beforeEach(function () {
+  this.callback = sinon.spy();
+  const authenticate = sinon.spy();
+  const getContent = sinon.stub();
+  setVersion(getContent, "1.0.0", "1.0.0");
+
+  Object.assign(this, {
+    authenticate,
+    getContent
+  });
+
+  class S3 {
+    constructor() {
+      this.getObject = () => ({
+        promise: () => Promise.resolve({
+          Body: 'cert'
+        })
+      });
+    }
+  }
+
+  class GitHubApi {
+    constructor() {
+      this.authenticate = authenticate;
+      this.apps = {
+        createInstallationToken: () => Promise.resolve({
+          data: {
+            token: "1"
+          }
+        })
+      };
+      this.repos = {
+        getContent: getContent,
+        createStatus: (status) => Promise.resolve({
+          data: {
+            description: status.description
+          }
+        })
+      };
+    }
+  }
+
+  process.env.WEBHOOK_SECRET = 'password';
+
+  this.myLambda = proxyquire('../versioncheckr', {
+    'aws-sdk': {
+      S3
+    },
+    'github': GitHubApi,
+    'jsonwebtoken': {
+      sign: () => {}
+    }
+  });
 });
 
 describe('versioncheckr', () => {
 
-  it(`Missing X-GitHub-Event`, (done) => {
+  it(`Missing X-GitHub-Event`, function () {
     const gitHubEvent = makeEvent('action', 'event');
     delete gitHubEvent.headers['X-GitHub-Event'];
 
-    myLambda.handler(gitHubEvent, {}, (err, result) => {
+    return this.myLambda.handler(gitHubEvent, {}, this.callback).then(() => {
+      const err = this.callback.getCall(0).args[0];
+      const result = this.callback.getCall(0).args[1];
       expect(err).to.not.exist;
       expect(result).to.exist;
       expect(result.statusCode).to.equal(400);
       expect(result.body).to.equal('Missing X-GitHub-Event');
-      done();
+      expect(this.authenticate.notCalled).to.be.true;
     });
   });
 
-  it(`Missing X-Hub-Signature`, (done) => {
+  it(`Missing X-Hub-Signature`, function () {
     const gitHubEvent = makeEvent('action', 'event');
     delete gitHubEvent.headers['X-Hub-Signature'];
 
-    myLambda.handler(gitHubEvent, {}, (err, result) => {
+    return this.myLambda.handler(gitHubEvent, {}, this.callback).then(() => {
+      const err = this.callback.getCall(0).args[0];
+      const result = this.callback.getCall(0).args[1];
       expect(err).to.not.exist;
       expect(result).to.exist;
       expect(result.statusCode).to.equal(400);
       expect(result.body).to.equal('Missing X-Hub-Signature');
-      done();
+      expect(this.authenticate.notCalled).to.be.true;
     });
   });
 
-  it(`Invalid X-Hub-Signature`, (done) => {
+  it(`Invalid X-Hub-Signature`, function () {
     const gitHubEvent = makeEvent('action', 'event');
     const body = '{ "foo": "bar" }';
     const differentBody = '{ "bar": "foo" }';
@@ -136,44 +153,50 @@ describe('versioncheckr', () => {
     gitHubEvent.body = differentBody;
     gitHubEvent.headers['X-Hub-Signature'] = `sha1=${hash}`;
 
-    myLambda.handler(gitHubEvent, {}, (err, result) => {
+    return this.myLambda.handler(gitHubEvent, {}, this.callback).then(() => {
+      const err = this.callback.getCall(0).args[0];
+      const result = this.callback.getCall(0).args[1];
       expect(err).to.not.exist;
       expect(result).to.exist;
       expect(result.statusCode).to.equal(400);
       expect(result.body).to.equal('Invalid X-Hub-Signature');
-      done();
+      expect(this.authenticate.notCalled).to.be.true;
     });
   });
 
-  it(`Invalid secret for X-Hub-Signature`, (done) => {
+  it(`Invalid secret for X-Hub-Signature`, function () {
     const gitHubEvent = makeEvent('action', 'event');
     const body = '{ "foo": "bar" }';
     const hash = createHash('not_the_secret', body);
     gitHubEvent.body = body;
     gitHubEvent.headers['X-Hub-Signature'] = `sha1=${hash}`;
 
-    myLambda.handler(gitHubEvent, {}, (err, result) => {
+    return this.myLambda.handler(gitHubEvent, {}, this.callback).then(() => {
+      const err = this.callback.getCall(0).args[0];
+      const result = this.callback.getCall(0).args[1];
       expect(err).to.not.exist;
       expect(result).to.exist;
       expect(result.statusCode).to.equal(400);
       expect(result.body).to.equal('Invalid X-Hub-Signature');
-      done();
+      expect(this.authenticate.notCalled).to.be.true;
     });
   });
 
-  it(`Valid X-Hub-Signature`, (done) => {
+  it(`Valid X-Hub-Signature`, function () {
     const gitHubEvent = makeEvent('action', 'event');
     const body = '{ "foo": "bar" }';
     const hash = createHash(process.env.WEBHOOK_SECRET, body);
     gitHubEvent.body = body;
     gitHubEvent.headers['X-Hub-Signature'] = `sha1=${hash}`;
 
-    myLambda.handler(gitHubEvent, {}, (err, result) => {
+    return this.myLambda.handler(gitHubEvent, {}, this.callback).then(() => {
+      const err = this.callback.getCall(0).args[0];
+      const result = this.callback.getCall(0).args[1];
       expect(err).to.not.exist;
       expect(result).to.exist;
       expect(result.statusCode).to.not.equal(400);
       expect(result.body).to.not.equal('Invalid X-Hub-Signature');
-      done();
+      expect(this.authenticate.notCalled).to.be.true;
     });
   });
 
@@ -195,13 +218,15 @@ describe('versioncheckr', () => {
       action: 'member_added'
     }
   ].forEach((data) => {
-    it(`Ignore event=${data.event} with action=${data.action}`, (done) => {
-      myLambda.handler(makeEvent(data.action, data.event), {}, (err, result) => {
+    it(`Ignore event=${data.event} with action=${data.action}`, function () {
+      return this.myLambda.handler(makeEvent(data.action, data.event), {}, this.callback).then(() => {
+        const err = this.callback.getCall(0).args[0];
+        const result = this.callback.getCall(0).args[1];
         expect(err).to.not.exist;
         expect(result).to.exist;
         expect(result.statusCode).to.equal(202);
         expect(result.body).to.equal('No action to take');
-        done();
+        expect(this.authenticate.notCalled).to.be.true;
       });
     });
   });
@@ -211,12 +236,14 @@ describe('versioncheckr', () => {
     'reopened',
     'synchronize'
   ].forEach((gitHubAction) => {
-    it(`Process pull request with action: type=${gitHubAction}`, (done) => {
-      myLambda.handler(makeEvent(gitHubAction, 'pull_request'), {}, (err, result) => {
+    it(`Process pull request with action: type=${gitHubAction}`, function () {
+      return this.myLambda.handler(makeEvent(gitHubAction, 'pull_request'), {}, this.callback).then(() => {
+        const err = this.callback.getCall(0).args[0];
+        const result = this.callback.getCall(0).args[1];
         expect(err).to.not.exist;
         expect(result).to.exist;
         expect(result.statusCode).to.equal(200);
-        done();
+        expect(this.authenticate.calledTwice).to.be.true;
       });
     });
   });
@@ -265,14 +292,18 @@ describe('versioncheckr', () => {
   ].forEach((data) => {
     const msg = data.isVersionHigher ?
       `Version ${data.newVersion} will replace ${data.oldVersion}` : `Version ${data.newVersion} should be bumped greater than ${data.oldVersion}`;
-    it(msg, (done) => {
-      const event = makeEvent('opened', 'pull_request', data.oldVersion, data.newVersion);
-      myLambda.handler(event, {}, (err, result) => {
+    it(msg, function () {
+      const event = makeEvent('opened', 'pull_request');
+      setVersion(this.getContent, data.oldVersion, data.newVersion);
+      return this.myLambda.handler(event, {}, this.callback).then(() => {
+        const err = this.callback.getCall(0).args[0];
+        const result = this.callback.getCall(0).args[1];
+        expect(this.callback.calledOnce).to.be.true;
         expect(err).to.not.exist;
         expect(result).to.exist;
         expect(result.statusCode).to.equal(200);
         expect(result.body).to.equal(msg);
-        done();
+        expect(this.authenticate.calledTwice).to.be.true;
       });
     });
   });
