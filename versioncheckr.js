@@ -52,16 +52,16 @@ function gitHubAuthenticate(appId, cert, installationId) {
     });
 }
 
-function getFilesFromGitHub(github, owner, repo, headRef, baseRef) {
+function getFilesFromGitHub(github, owner, repo, baseSha, headSha) {
   const getContentParams = {
     owner: owner,
     repo: repo,
-    ref: baseRef,
+    ref: baseSha,
     path: 'package.json'
   };
 
   const basePackageJson = github.repos.getContent(getContentParams);
-  getContentParams.ref = headRef;
+  getContentParams.ref = headSha;
   const headPackageJson = github.repos.getContent(getContentParams);
 
   return Promise.all([basePackageJson, headPackageJson])
@@ -128,14 +128,13 @@ module.exports.handler = (event, context, callback) => {
   const installationId = pullRequest.installation.id;
   const owner = pullRequest.repository.owner.login;
   const repo = pullRequest.repository.name;
-  const headRef = pullRequest.pull_request.head.ref;
-  const sha = pullRequest.pull_request.head.sha;
-  const baseRef = pullRequest.pull_request.base.ref;
+  const baseSha = pullRequest.pull_request.base.sha;
+  const headSha = pullRequest.pull_request.head.sha;
 
   return Promise.resolve(privateKey)
     .then(privateKey => gitHubAuthenticate(process.env.APP_ID, privateKey, installationId))
-    .then(github => getFilesFromGitHub(github, owner, repo, headRef, baseRef))
-    .then(res => postStatus(res.github, owner, repo, sha, res.oldVersion, res.newVersion))
+    .then(github => getFilesFromGitHub(github, owner, repo, baseSha, headSha))
+    .then(res => postStatus(res.github, owner, repo, headSha, res.oldVersion, res.newVersion))
     .then(res => callback(null, createResponse(200, res.data.description)))
     .catch(err => callback(err));
 };
