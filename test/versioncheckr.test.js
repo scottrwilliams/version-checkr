@@ -3,7 +3,8 @@
 const crypto = require('crypto'),
   proxyquire = require('proxyquire'),
   expect = require('chai').expect,
-  sinon = require('sinon');
+  sinon = require('sinon'),
+  GitHubApi = require('github');
 
 function createHash(secret, body) {
   const hmac = crypto.createHmac('sha1', secret);
@@ -20,16 +21,17 @@ function makeEvent(action, eventType) {
       id: 1
     },
     repository: {
-      owner: "Bob",
-      name: "repo"
+      name: "myrepo",
+      owner: {
+        login: "bob"
+      }
     },
     pull_request: {
       head: {
-        ref: "branch",
-        sha: "9049f1265b7d61be4a8904a9a27120d2064dab3b"
+        sha: "headSha"
       },
       base: {
-        ref: "master"
+        sha: "baseSha"
       }
     }
   };
@@ -54,20 +56,12 @@ function setVersion(getContentStub, oldVersion, newVersion) {
       }
     };
   }
-  getContentStub.withArgs(sinon.match.has("ref", "master")).resolves(createContent(oldVersion));
-  getContentStub.withArgs(sinon.match.has("ref", "branch")).resolves(createContent(newVersion));
+  getContentStub.withArgs(sinon.match.has("ref", "baseSha")).resolves(createContent(oldVersion));
+  getContentStub.withArgs(sinon.match.has("ref", "headSha")).resolves(createContent(newVersion));
 }
 
 beforeEach(function () {
   this.callback = sinon.spy();
-  const authenticate = sinon.spy();
-  const getContent = sinon.stub();
-  setVersion(getContent, "1.0.0", "1.0.0");
-
-  Object.assign(this, {
-    authenticate,
-    getContent
-  });
 
   class S3 {
     constructor() {
@@ -79,38 +73,46 @@ beforeEach(function () {
     }
   }
 
-  class GitHubApi {
-    constructor() {
-      this.authenticate = authenticate;
-      this.apps = {
-        createInstallationToken: () => Promise.resolve({
-          data: {
-            token: "1"
-          }
-        })
-      };
-      this.repos = {
-        getContent: getContent,
-        createStatus: (status) => Promise.resolve({
-          data: {
-            description: status.description
-          }
-        })
-      };
-    }
-  }
-
   process.env.WEBHOOK_SECRET = 'password';
+
+  const GitHubApiStub = sinon.stub(GitHubApi.prototype, "authenticate");
+  const getContent = sinon.stub();
+  setVersion(getContent, "1.0.0", "1.0.0");
+
+  Object.assign(this, {
+    getContent,
+    GitHubApiStub
+  });
+
+  GitHubApiStub.prototype.apps = {
+    createInstallationToken: () => Promise.resolve({
+      data: {
+        token: "1"
+      }
+    })
+  };
+  GitHubApiStub.prototype.repos = {
+    getContent: getContent,
+    createStatus: (status) => Promise.resolve({
+      data: {
+        description: status.description
+      }
+    })
+  };
 
   this.myLambda = proxyquire('../versioncheckr', {
     'aws-sdk': {
       S3
     },
-    'github': GitHubApi,
+    'github': GitHubApiStub,
     'jsonwebtoken': {
       sign: () => {}
     }
   });
+});
+
+afterEach(function () {
+  this.GitHubApiStub.restore();
 });
 
 describe('versioncheckr', () => {
@@ -126,7 +128,7 @@ describe('versioncheckr', () => {
       expect(result).to.exist;
       expect(result.statusCode).to.equal(400);
       expect(result.body).to.equal('Missing X-GitHub-Event');
-      expect(this.authenticate.notCalled).to.be.true;
+      expect(this.GitHubApiStub.notCalled).to.be.true;
     });
   });
 
@@ -141,7 +143,7 @@ describe('versioncheckr', () => {
       expect(result).to.exist;
       expect(result.statusCode).to.equal(400);
       expect(result.body).to.equal('Missing X-Hub-Signature');
-      expect(this.authenticate.notCalled).to.be.true;
+      expect(this.GitHubApiStub.notCalled).to.be.true;
     });
   });
 
@@ -160,7 +162,7 @@ describe('versioncheckr', () => {
       expect(result).to.exist;
       expect(result.statusCode).to.equal(400);
       expect(result.body).to.equal('Invalid X-Hub-Signature');
-      expect(this.authenticate.notCalled).to.be.true;
+      expect(this.GitHubApiStub.notCalled).to.be.true;
     });
   });
 
@@ -178,7 +180,7 @@ describe('versioncheckr', () => {
       expect(result).to.exist;
       expect(result.statusCode).to.equal(400);
       expect(result.body).to.equal('Invalid X-Hub-Signature');
-      expect(this.authenticate.notCalled).to.be.true;
+      expect(this.GitHubApiStub.notCalled).to.be.true;
     });
   });
 
@@ -196,7 +198,7 @@ describe('versioncheckr', () => {
       expect(result).to.exist;
       expect(result.statusCode).to.not.equal(400);
       expect(result.body).to.not.equal('Invalid X-Hub-Signature');
-      expect(this.authenticate.notCalled).to.be.true;
+      expect(this.GitHubApiStub.notCalled).to.be.true;
     });
   });
 
@@ -226,7 +228,7 @@ describe('versioncheckr', () => {
         expect(result).to.exist;
         expect(result.statusCode).to.equal(202);
         expect(result.body).to.equal('No action to take');
-        expect(this.authenticate.notCalled).to.be.true;
+        expect(this.GitHubApiStub.notCalled).to.be.true;
       });
     });
   });
@@ -243,7 +245,7 @@ describe('versioncheckr', () => {
         expect(err).to.not.exist;
         expect(result).to.exist;
         expect(result.statusCode).to.equal(200);
-        expect(this.authenticate.calledTwice).to.be.true;
+        expect(this.GitHubApiStub.called).to.be.true;
       });
     });
   });
@@ -303,7 +305,7 @@ describe('versioncheckr', () => {
         expect(result).to.exist;
         expect(result.statusCode).to.equal(200);
         expect(result.body).to.equal(msg);
-        expect(this.authenticate.calledTwice).to.be.true;
+        expect(this.GitHubApiStub.called).to.be.true;
       });
     });
   });
