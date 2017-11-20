@@ -38,7 +38,6 @@ function makeEvent(action, eventType) {
 
   const bodyString = JSON.stringify(body);
   const hash = createHash(process.env.WEBHOOK_SECRET, bodyString);
-
   return {
     body: bodyString,
     headers: {
@@ -49,19 +48,17 @@ function makeEvent(action, eventType) {
 }
 
 function setVersion(getContentStub, oldVersion, newVersion) {
-  function createContent(version) {
-    return {
-      data: {
-        content: new Buffer(`{"version": "${version}"}`).toString('base64')
-      }
-    };
-  }
+  const createContent = (version) => ({
+    data: {
+      content: new Buffer(`{"version": "${version}"}`).toString('base64')
+    }
+  });
   getContentStub.withArgs(sinon.match.has("ref", "baseSha")).resolves(createContent(oldVersion));
   getContentStub.withArgs(sinon.match.has("ref", "headSha")).resolves(createContent(newVersion));
 }
 
 function validateCallback(callback, statusCode, body) {
-  expect(callback.calledOnce).to.be.true;
+  sinon.assert.calledOnce(callback);
   const err = callback.getCall(0).args[0];
   const result = callback.getCall(0).args[1];
   if (statusCode) {
@@ -135,9 +132,9 @@ describe('versioncheckr', () => {
     delete gitHubEvent.headers['X-GitHub-Event'];
     return this.myLambda.handler(gitHubEvent, {}, this.callback).then(() => {
       validateCallback(this.callback, 400, 'Missing X-GitHub-Event');
-      expect(this.GitHubApiStub.notCalled).to.be.true;
-      expect(this.getContent.notCalled).to.be.true;
-      expect(this.createStatus.notCalled).to.be.true;
+      sinon.assert.notCalled(this.GitHubApiStub);
+      sinon.assert.notCalled(this.getContent);
+      sinon.assert.notCalled(this.createStatus);
     });
   });
 
@@ -146,9 +143,9 @@ describe('versioncheckr', () => {
     delete gitHubEvent.headers['X-Hub-Signature'];
     return this.myLambda.handler(gitHubEvent, {}, this.callback).then(() => {
       validateCallback(this.callback, 400, 'Missing X-Hub-Signature');
-      expect(this.GitHubApiStub.notCalled).to.be.true;
-      expect(this.getContent.notCalled).to.be.true;
-      expect(this.createStatus.notCalled).to.be.true;
+      sinon.assert.notCalled(this.GitHubApiStub);
+      sinon.assert.notCalled(this.getContent);
+      sinon.assert.notCalled(this.createStatus);
     });
   });
 
@@ -161,9 +158,9 @@ describe('versioncheckr', () => {
     gitHubEvent.headers['X-Hub-Signature'] = `sha1=${hash}`;
     return this.myLambda.handler(gitHubEvent, {}, this.callback).then(() => {
       validateCallback(this.callback, 400, 'Invalid X-Hub-Signature');
-      expect(this.GitHubApiStub.notCalled).to.be.true;
-      expect(this.getContent.notCalled).to.be.true;
-      expect(this.createStatus.notCalled).to.be.true;
+      sinon.assert.notCalled(this.GitHubApiStub);
+      sinon.assert.notCalled(this.getContent);
+      sinon.assert.notCalled(this.createStatus);
     });
   });
 
@@ -175,9 +172,9 @@ describe('versioncheckr', () => {
     gitHubEvent.headers['X-Hub-Signature'] = `sha1=${hash}`;
     return this.myLambda.handler(gitHubEvent, {}, this.callback).then(() => {
       validateCallback(this.callback, 400, 'Invalid X-Hub-Signature');
-      expect(this.GitHubApiStub.notCalled).to.be.true;
-      expect(this.getContent.notCalled).to.be.true;
-      expect(this.createStatus.notCalled).to.be.true;
+      sinon.assert.notCalled(this.GitHubApiStub);
+      sinon.assert.notCalled(this.getContent);
+      sinon.assert.notCalled(this.createStatus);
     });
   });
 
@@ -189,9 +186,9 @@ describe('versioncheckr', () => {
     gitHubEvent.headers['X-Hub-Signature'] = `sha1=${hash}`;
     return this.myLambda.handler(gitHubEvent, {}, this.callback).then(() => {
       validateCallback(this.callback, 202);
-      expect(this.GitHubApiStub.notCalled).to.be.true;
-      expect(this.getContent.notCalled).to.be.true;
-      expect(this.createStatus.notCalled).to.be.true;
+      sinon.assert.notCalled(this.GitHubApiStub);
+      sinon.assert.notCalled(this.getContent);
+      sinon.assert.notCalled(this.createStatus);
     });
   });
 
@@ -199,9 +196,9 @@ describe('versioncheckr', () => {
     this.GitHubApiStub.withArgs(sinon.match.has("type", "token")).throws("AuthenticateError");
     return this.myLambda.handler(makeEvent('opened', 'pull_request'), {}, this.callback).then(() => {
       validateCallback(this.callback);
-      expect(this.GitHubApiStub.called).to.be.true;
-      expect(this.getContent.notCalled).to.be.true;
-      expect(this.createStatus.notCalled).to.be.true;
+      sinon.assert.called(this.GitHubApiStub);
+      sinon.assert.notCalled(this.getContent);
+      sinon.assert.notCalled(this.createStatus);
     });
   });
 
@@ -210,9 +207,9 @@ describe('versioncheckr', () => {
     this.getContent.rejects("GetContentError");
     return this.myLambda.handler(makeEvent('opened', 'pull_request'), {}, this.callback).then(() => {
       validateCallback(this.callback);
-      expect(this.GitHubApiStub.called).to.be.true;
-      expect(this.getContent.called).to.be.true;
-      expect(this.createStatus.notCalled).to.be.true;
+      sinon.assert.called(this.GitHubApiStub);
+      sinon.assert.called(this.getContent);
+      sinon.assert.notCalled(this.createStatus);
     });
   });
 
@@ -220,9 +217,9 @@ describe('versioncheckr', () => {
     this.createStatus.rejects("CreateStatusError");
     return this.myLambda.handler(makeEvent('opened', 'pull_request'), {}, this.callback).then(() => {
       validateCallback(this.callback);
-      expect(this.GitHubApiStub.called).to.be.true;
-      expect(this.getContent.calledTwice).to.be.true;
-      expect(this.createStatus.calledOnce).to.be.true;
+      sinon.assert.called(this.GitHubApiStub);
+      sinon.assert.calledTwice(this.getContent);
+      sinon.assert.calledOnce(this.createStatus);
     });
   });
 
@@ -247,9 +244,9 @@ describe('versioncheckr', () => {
     it(`Ignore event=${data.event} with action=${data.action}`, function () {
       return this.myLambda.handler(makeEvent(data.action, data.event), {}, this.callback).then(() => {
         validateCallback(this.callback, 202, 'No action to take');
-        expect(this.GitHubApiStub.notCalled).to.be.true;
-        expect(this.getContent.notCalled).to.be.true;
-        expect(this.createStatus.notCalled).to.be.true;
+        sinon.assert.notCalled(this.GitHubApiStub);
+        sinon.assert.notCalled(this.getContent);
+        sinon.assert.notCalled(this.createStatus);
       });
     });
   });
@@ -262,9 +259,9 @@ describe('versioncheckr', () => {
     it(`Process pull request with action: type=${gitHubAction}`, function () {
       return this.myLambda.handler(makeEvent(gitHubAction, 'pull_request'), {}, this.callback).then(() => {
         validateCallback(this.callback, 200);
-        expect(this.GitHubApiStub.called).to.be.true;
-        expect(this.getContent.calledTwice).to.be.true;
-        expect(this.createStatus.calledOnce).to.be.true;
+        sinon.assert.called(this.GitHubApiStub);
+        sinon.assert.calledTwice(this.getContent);
+        sinon.assert.calledOnce(this.createStatus);
       });
     });
   });
@@ -318,11 +315,10 @@ describe('versioncheckr', () => {
       setVersion(this.getContent, data.oldVersion, data.newVersion);
       return this.myLambda.handler(event, {}, this.callback).then(() => {
         validateCallback(this.callback, 200, msg);
-        expect(this.GitHubApiStub.called).to.be.true;
-        expect(this.getContent.calledTwice).to.be.true;
-        expect(this.createStatus.calledOnce).to.be.true;
+        sinon.assert.called(this.GitHubApiStub);
+        sinon.assert.calledTwice(this.getContent);
+        sinon.assert.calledOnce(this.createStatus);
       });
     });
   });
-
 });
