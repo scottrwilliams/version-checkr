@@ -14,7 +14,7 @@ function createHash(secret, body) {
   return hmac.read();
 }
 
-function makeEvent(action, eventType) {
+function makeEvent(action, eventType, commentBody = "") {
   const body = {
     action: action,
     installation: {
@@ -32,7 +32,8 @@ function makeEvent(action, eventType) {
       },
       base: {
         sha: "baseSha"
-      }
+      },
+      body: commentBody
     }
   };
 
@@ -261,11 +262,61 @@ describe('versioncheckr', () => {
   });
 
   [
+    {
+      body: '@version-checkr:skip',
+      testing: 'basic'
+    },
+    {
+      body: 'My comment.\n@version checker:skip',
+      testing: 'on newline'
+    },
+    {
+      body: 'Hello.\n\n@VeRsiOnCHECKER:skip',
+      testing: 'mixed caps'
+    }
+  ].forEach((data) => {
+    it(`Skip comment ${data.testing}`, function () {
+      return this.myLambda.handler(makeEvent('opened', 'pull_request', data.body), {}, this.callback).then(() => {
+        validateCallback(this.callback, 202, 'Skipping');
+        sinon.assert.notCalled(this.GitHubApiStub);
+        sinon.assert.notCalled(this.GitHubStubInstance.authenticate);
+        sinon.assert.notCalled(this.getContent);
+        sinon.assert.notCalled(this.createStatus);
+      });
+    });
+  });
+
+  [
+    {
+      body: 'version-checkr:skip',
+      testing: 'missing @'
+    },
+    {
+      body: 'My comment.',
+      testing: 'missing definition'
+    },
+    {
+      body: '@version-checkr:off',
+      testing: 'without skip action'
+    }
+  ].forEach((data) => {
+    it(`Do not skip comment ${data.testing}`, function () {
+      return this.myLambda.handler(makeEvent('opened', 'pull_request', data.body), {}, this.callback).then(() => {
+        validateCallback(this.callback, 200);
+        sinon.assert.calledWithNew(this.GitHubApiStub);
+        sinon.assert.calledTwice(this.GitHubStubInstance.authenticate);
+        sinon.assert.calledTwice(this.getContent);
+        sinon.assert.calledOnce(this.createStatus);
+      });
+    });
+  });
+
+  [
     'opened',
     'reopened',
     'synchronize'
   ].forEach((gitHubAction) => {
-    it(`Process pull request with action: type=${gitHubAction}`, function () {
+    it(`Process pull request with action type ${gitHubAction}`, function () {
       return this.myLambda.handler(makeEvent(gitHubAction, 'pull_request'), {}, this.callback).then(() => {
         validateCallback(this.callback, 200);
         sinon.assert.calledWithNew(this.GitHubApiStub);

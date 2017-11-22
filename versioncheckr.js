@@ -125,6 +125,17 @@ module.exports.handler = (event, context, callback) => {
     return Promise.resolve(callback(null, createResponse(202, 'No action to take')));
   }
 
+  const body = pullRequest.pull_request.body;
+  if (body) {
+    const match = /^@version[- ]?checke?r:(\S+)/im.exec(body);
+    if (match !== null) {
+      const option = match[1].toLowerCase();
+      if (option === 'skip') {
+        return Promise.resolve(callback(null, createResponse(202, 'Skipping')));
+      }
+    }
+  }
+
   const installationId = pullRequest.installation.id;
   const owner = pullRequest.repository.owner.login;
   const repo = pullRequest.repository.name;
