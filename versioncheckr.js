@@ -78,7 +78,7 @@ function getFilesFromGitHub(github, owner, repo, baseSha, headSha) {
 function postStatus(github, owner, repo, sha, oldVersion, newVersion) {
   const isNewer = semver.gt(newVersion, oldVersion);
   const description = isNewer ?
-    `Version ${newVersion} will replace ${oldVersion}` : `Version ${newVersion} should be bumped greater than ${oldVersion}`;
+    `Version ${oldVersion} will be replaced by ${newVersion}` : `Version ${newVersion} should be bumped greater than ${oldVersion}`;
 
   return github.repos.createStatus({
       owner: owner,
