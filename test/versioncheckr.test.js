@@ -319,7 +319,7 @@ describe('versioncheckr', () => {
     }
   ].forEach((data) => {
     const msg = data.isVersionHigher ?
-      `Version ${data.newVersion} will replace ${data.oldVersion}` : `Version ${data.newVersion} should be bumped greater than ${data.oldVersion}`;
+      `Version ${data.oldVersion} will be replaced by ${data.newVersion}` : `Version ${data.newVersion} should be bumped greater than ${data.oldVersion}`;
     it(msg, function () {
       const event = makeEvent('opened', 'pull_request');
       setVersion(this.getContent, data.oldVersion, data.newVersion);
