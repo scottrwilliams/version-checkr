@@ -282,6 +282,7 @@ describe('versioncheckr', () => {
         sinon.assert.calledTwice(this.GitHubStubInstance.authenticate);
         sinon.assert.notCalled(this.getContent);
         sinon.assert.calledOnce(this.createStatus);
+        sinon.assert.calledWith(this.createStatus, sinon.match.has('state', 'success'));
       });
     });
   });
@@ -336,6 +337,7 @@ describe('versioncheckr', () => {
       sinon.assert.calledTwice(this.GitHubStubInstance.authenticate);
       sinon.assert.calledTwice(this.getContent);
       sinon.assert.calledOnce(this.createStatus);
+      sinon.assert.calledWith(this.createStatus, sinon.match.has('state', 'success'));
     });
   });
 
@@ -474,6 +476,7 @@ describe('versioncheckr', () => {
         sinon.assert.calledTwice(this.GitHubStubInstance.authenticate);
         sinon.assert.calledTwice(this.getContent);
         sinon.assert.calledOnce(this.createStatus);
+        sinon.assert.calledWith(this.createStatus, sinon.match.has('state', data.isVersionHigher ? 'success' : 'failure'));
       });
     });
   });

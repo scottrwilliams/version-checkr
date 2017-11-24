@@ -154,7 +154,7 @@ module.exports.handler = (event, context, callback) => {
     processEvent = processEvent
       .then((github) => ({
         github: github,
-        state: 'success',
+        success: true,
         description: 'Skipped the version check'
       }));
   } else {
@@ -163,7 +163,7 @@ module.exports.handler = (event, context, callback) => {
   }
 
   return processEvent
-    .then(res => postStatus(res.github, owner, repo, headSha, res.state, res.description))
+    .then(res => postStatus(res.github, owner, repo, headSha, res.success, res.description))
     .then(res => callback(null, createResponse(200, res.data.description)))
     .catch(err => callback(err));
 };
