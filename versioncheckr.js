@@ -154,7 +154,7 @@ module.exports.handler = (event, context, callback) => {
     processEvent = processEvent
       .then((github) => ({
         github: github,
-        state: true,
+        state: 'success',
         description: 'Skipped the version check'
       }));
   } else {
