@@ -14,7 +14,7 @@ function createHash(secret, body) {
   return hmac.read();
 }
 
-function makeEvent(action, eventType) {
+function makeEvent(action, eventType, commentBody = "") {
   const body = {
     action: action,
     installation: {
@@ -32,7 +32,8 @@ function makeEvent(action, eventType) {
       },
       base: {
         sha: "baseSha"
-      }
+      },
+      body: commentBody
     }
   };
 
@@ -261,12 +262,47 @@ describe('versioncheckr', () => {
   });
 
   [
-    'opened',
-    'reopened',
-    'synchronize'
-  ].forEach((gitHubAction) => {
-    it(`Process pull request with action: type=${gitHubAction}`, function () {
-      return this.myLambda.handler(makeEvent(gitHubAction, 'pull_request'), {}, this.callback).then(() => {
+    {
+      commentBody: '#version-checkr:skip',
+      testing: 'basic'
+    },
+    {
+      commentBody: 'My comment.\n#version checker: skip',
+      testing: 'on newline'
+    },
+    {
+      commentBody: 'Hello.\n\n#VeRsiOnCHECKER:skIp',
+      testing: 'mixed caps'
+    }
+  ].forEach((data) => {
+    it(`Skip comment ${data.testing}`, function () {
+      return this.myLambda.handler(makeEvent('opened', 'pull_request', data.commentBody), {}, this.callback).then(() => {
+        validateCallback(this.callback, 200, 'Skipped the version check');
+        sinon.assert.calledWithNew(this.GitHubApiStub);
+        sinon.assert.calledTwice(this.GitHubStubInstance.authenticate);
+        sinon.assert.notCalled(this.getContent);
+        sinon.assert.calledOnce(this.createStatus);
+        sinon.assert.calledWith(this.createStatus, sinon.match.has('state', 'success'));
+      });
+    });
+  });
+
+  [
+    {
+      commentBody: 'version-checkr:skip',
+      testing: 'missing @'
+    },
+    {
+      commentBody: 'My comment.',
+      testing: 'missing definition'
+    },
+    {
+      commentBody: '#version-checkr:off',
+      testing: 'without skip action'
+    }
+  ].forEach((data) => {
+    it(`Do not skip comment ${data.testing}`, function () {
+      return this.myLambda.handler(makeEvent('opened', 'pull_request', data.commentBody), {}, this.callback).then(() => {
         validateCallback(this.callback, 200);
         sinon.assert.calledWithNew(this.GitHubApiStub);
         sinon.assert.calledTwice(this.GitHubStubInstance.authenticate);
@@ -277,51 +313,162 @@ describe('versioncheckr', () => {
   });
 
   [
+    'opened',
+    'reopened',
+    'synchronize',
+    'edited'
+  ].forEach((gitHubAction) => {
+    it(`Process pull request with action type ${gitHubAction}`, function () {
+      return this.myLambda.handler(makeEvent(gitHubAction, 'pull_request'), {}, this.callback).then(() => {
+        validateCallback(this.callback, 200);
+        sinon.assert.calledWithNew(this.GitHubApiStub);
+        sinon.assert.calledTwice(this.GitHubStubInstance.authenticate);
+        sinon.assert.calledTwice(this.getContent);
+        sinon.assert.calledOnce(this.createStatus);
+      });
+    });
+  });
+
+  it(`Checking the patch version number by default`, function () {
+    setVersion(this.getContent, "1.0.0", "1.0.1");
+    return this.myLambda.handler(makeEvent('opened', 'pull_request'), {}, this.callback).then(() => {
+      validateCallback(this.callback, 200, 'Version 1.0.1 will replace 1.0.0');
+      sinon.assert.calledWithNew(this.GitHubApiStub);
+      sinon.assert.calledTwice(this.GitHubStubInstance.authenticate);
+      sinon.assert.calledTwice(this.getContent);
+      sinon.assert.calledOnce(this.createStatus);
+      sinon.assert.calledWith(this.createStatus, sinon.match.has('state', 'success'));
+    });
+  });
+
+  [
     {
       oldVersion: '1.0.0',
       newVersion: '1.0.1',
+      releaseType: 'patch',
       isVersionHigher: true
     },
     {
       oldVersion: '0.0.0',
       newVersion: '1.0.0',
+      releaseType: 'patch',
       isVersionHigher: true
     },
     {
       oldVersion: '1.0.0',
       newVersion: '1.1.0',
+      releaseType: 'patch',
       isVersionHigher: true
     },
     {
       oldVersion: '9.9.99',
       newVersion: '10.0.0',
+      releaseType: 'patch',
+      isVersionHigher: true
+    },
+    {
+      oldVersion: '1.0.0',
+      newVersion: '1.1.0',
+      releaseType: 'minor',
+      isVersionHigher: true
+    },
+    {
+      oldVersion: '1.1.0',
+      newVersion: '1.2.0',
+      releaseType: 'minor',
+      isVersionHigher: true
+    },
+    {
+      oldVersion: '9.9.99',
+      newVersion: '10.0.0',
+      releaseType: 'minor',
+      isVersionHigher: true
+    },
+    {
+      oldVersion: '1.0.0',
+      newVersion: '2.0.0',
+      releaseType: 'major',
+      isVersionHigher: true
+    },
+    {
+      oldVersion: '0.99.99',
+      newVersion: '1.0.0',
+      releaseType: 'major',
+      isVersionHigher: true
+    },
+    {
+      oldVersion: '10.2.2',
+      newVersion: '12.1.1',
+      releaseType: 'major',
       isVersionHigher: true
     },
     {
       oldVersion: '1.0.0',
       newVersion: '1.0.0',
+      releaseType: 'patch',
       isVersionHigher: false
     },
     {
       oldVersion: '1.0.0',
       newVersion: '0.0.0',
+      releaseType: 'patch',
       isVersionHigher: false
     },
     {
       oldVersion: '1.0.1',
       newVersion: '1.0.0',
+      releaseType: 'patch',
       isVersionHigher: false
     },
     {
       oldVersion: '1.1.0',
       newVersion: '1.0.9',
+      releaseType: 'patch',
+      isVersionHigher: false
+    },
+    {
+      oldVersion: '0.0.0',
+      newVersion: '0.0.1',
+      releaseType: 'minor',
+      isVersionHigher: false
+    },
+    {
+      oldVersion: '1.0.0',
+      newVersion: '1.0.99',
+      releaseType: 'minor',
+      isVersionHigher: false
+    },
+    {
+      oldVersion: '1.1.1',
+      newVersion: '1.1.1',
+      releaseType: 'minor',
+      isVersionHigher: false
+    },
+    {
+      oldVersion: '0.0.0',
+      newVersion: '0.0.1',
+      releaseType: 'major',
+      isVersionHigher: false
+    },
+    {
+      oldVersion: '0.0.0',
+      newVersion: '0.1.0',
+      releaseType: 'major',
+      isVersionHigher: false
+    },
+    {
+      oldVersion: '1.8.8',
+      newVersion: '1.9.9',
+      releaseType: 'major',
       isVersionHigher: false
     }
   ].forEach((data) => {
     const msg = data.isVersionHigher ?
-      `Version ${data.oldVersion} will be replaced by ${data.newVersion}` : `Version ${data.newVersion} should be bumped greater than ${data.oldVersion}`;
-    it(msg, function () {
-      const event = makeEvent('opened', 'pull_request');
+      `Version ${data.newVersion} will replace ${data.oldVersion}` : `Version ${data.newVersion} requires a ${data.releaseType} version number greater than ${data.oldVersion}`;
+    const testTitle = data.isVersionHigher ? `${msg} (${data.releaseType} test)` : msg;
+    it(testTitle, function () {
+      const commentBody = `#version-checkr:${data.releaseType}`;
+      const event = makeEvent('opened', 'pull_request', commentBody);
       setVersion(this.getContent, data.oldVersion, data.newVersion);
       return this.myLambda.handler(event, {}, this.callback).then(() => {
         validateCallback(this.callback, 200, msg);
@@ -329,6 +476,7 @@ describe('versioncheckr', () => {
         sinon.assert.calledTwice(this.GitHubStubInstance.authenticate);
         sinon.assert.calledTwice(this.getContent);
         sinon.assert.calledOnce(this.createStatus);
+        sinon.assert.calledWith(this.createStatus, sinon.match.has('state', data.isVersionHigher ? 'success' : 'failure'));
       });
     });
   });

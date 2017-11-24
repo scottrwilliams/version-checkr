@@ -52,7 +52,7 @@ function gitHubAuthenticate(appId, cert, installationId) {
     });
 }
 
-function getFilesFromGitHub(github, owner, repo, baseSha, headSha) {
+function compareVersionsFromGitHub(github, owner, repo, baseSha, headSha, releaseType) {
   const getContentParams = {
     owner: owner,
     repo: repo,
@@ -65,26 +65,30 @@ function getFilesFromGitHub(github, owner, repo, baseSha, headSha) {
   const headPackageJson = github.repos.getContent(getContentParams);
 
   return Promise.all([basePackageJson, headPackageJson])
-    .then(([baseFile, headFile]) => ({
-      github: github,
-      oldVersion: JSON.parse(new Buffer(baseFile.data.content, 'base64')).version,
-      newVersion: JSON.parse(new Buffer(headFile.data.content, 'base64')).version
-    }))
+    .then(([baseFile, headFile]) => {
+      const oldVersion = JSON.parse(new Buffer(baseFile.data.content, 'base64')).version;
+      const newVersion = JSON.parse(new Buffer(headFile.data.content, 'base64')).version
+      const oldVersionIncremented = semver.inc(oldVersion, releaseType);
+      const isNewer = semver.gte(newVersion, oldVersionIncremented);
+      const description = isNewer ?
+        `Version ${newVersion} will replace ${oldVersion}` : `Version ${newVersion} requires a ${releaseType} version number greater than ${oldVersion}`;
+      return {
+        github: github,
+        success: isNewer,
+        description: description
+      };
+    })
     .catch(err => {
       throw new Error(JSON.stringify(err));
     });
 }
 
-function postStatus(github, owner, repo, sha, oldVersion, newVersion) {
-  const isNewer = semver.gt(newVersion, oldVersion);
-  const description = isNewer ?
-    `Version ${oldVersion} will be replaced by ${newVersion}` : `Version ${newVersion} should be bumped greater than ${oldVersion}`;
-
+function postStatus(github, owner, repo, sha, success, description) {
   return github.repos.createStatus({
       owner: owner,
       repo: repo,
       sha: sha,
-      state: isNewer ? 'success' : 'failure',
+      state: success ? 'success' : 'failure',
       description: description,
       context: 'Version Checkr'
     })
@@ -121,7 +125,7 @@ module.exports.handler = (event, context, callback) => {
   const pullRequest = JSON.parse(event.body);
 
   if (githubEvent !== 'pull_request' ||
-    !(pullRequest.action === 'opened' || pullRequest.action === 'reopened' || pullRequest.action === 'synchronize')) {
+    !['opened', 'reopened', 'synchronize', 'edited'].includes(pullRequest.action)) {
     return Promise.resolve(callback(null, createResponse(202, 'No action to take')));
   }
 
@@ -130,11 +134,33 @@ module.exports.handler = (event, context, callback) => {
   const repo = pullRequest.repository.name;
   const baseSha = pullRequest.pull_request.base.sha;
   const headSha = pullRequest.pull_request.head.sha;
+  const body = pullRequest.pull_request.body;
 
-  return Promise.resolve(privateKey)
-    .then(privateKey => gitHubAuthenticate(process.env.APP_ID, privateKey, installationId))
-    .then(github => getFilesFromGitHub(github, owner, repo, baseSha, headSha))
-    .then(res => postStatus(res.github, owner, repo, headSha, res.oldVersion, res.newVersion))
+  let checking = 'patch';
+  if (body) {
+    const match = /^#version[- ]?checke?r:\s?(skip|major|minor|patch)/im.exec(body);
+    if (match !== null) {
+      checking = match[1].toLowerCase();
+    }
+  }
+
+  let processEvent = Promise.resolve(privateKey)
+    .then(privateKey => gitHubAuthenticate(process.env.APP_ID, privateKey, installationId));
+
+  if (checking === 'skip') {
+    processEvent = processEvent
+      .then((github) => ({
+        github: github,
+        success: true,
+        description: 'Skipped the version check'
+      }));
+  } else {
+    processEvent = processEvent
+      .then(github => compareVersionsFromGitHub(github, owner, repo, baseSha, headSha, checking));
+  }
+
+  return processEvent
+    .then(res => postStatus(res.github, owner, repo, headSha, res.success, res.description))
     .then(res => callback(null, createResponse(200, res.data.description)))
     .catch(err => callback(err));
 };
