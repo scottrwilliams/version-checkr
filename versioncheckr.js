@@ -138,12 +138,9 @@ module.exports.handler = (event, context, callback) => {
 
   let checking = 'patch';
   if (body) {
-    const match = /^#version[- ]?checke?r:\s?([a-z]+)/im.exec(body);
+    const match = /^#version[- ]?checke?r:\s?(skip|major|minor|patch)/im.exec(body);
     if (match !== null) {
-      const matchAction = match[1].toLowerCase();
-      if (['skip', 'major', 'minor', 'patch'].includes(matchAction)) {
-        checking = matchAction;
-      }
+      checking = match[1].toLowerCase();
     }
   }
 
