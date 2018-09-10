@@ -3,8 +3,7 @@
 const crypto = require('crypto'),
   proxyquire = require('proxyquire'),
   expect = require('chai').expect,
-  sinon = require('sinon'),
-  GitHubApi = require('github');
+  sinon = require('sinon');
 
 function createHash(secret, body) {
   const hmac = crypto.createHmac('sha1', secret);
@@ -79,31 +78,33 @@ beforeEach(function () {
   process.env.WEBHOOK_SECRET = 'password';
   this.callback = sinon.spy();
 
-  GitHubApi.prototype.apps = {
-    createInstallationToken: () => Promise.resolve({
-      data: {
-        token: "1"
-      }
-    })
-  };
-
-  this.getContent = sinon.stub();
+  const authenticate = sinon.stub();
+  this.authenticate = authenticate;
+  const getContent = sinon.stub();
+  this.getContent = getContent;
   setVersion(this.getContent, "1.0.0", "1.0.0");
-  this.createStatus = sinon.stub().callsFake((status) => Promise.resolve({
+  const createStatus = sinon.stub().callsFake((status) => Promise.resolve({
     data: {
       description: status.description
     }
   }));
-  GitHubApi.prototype.repos = {
-    getContent: this.getContent,
-    createStatus: this.createStatus
-  };
-
-  const GitHubStubInstance = sinon.createStubInstance(GitHubApi);
-  this.GitHubStubInstance = GitHubStubInstance;
-  this.GitHubApiStub = sinon.spy(function () {
-    return GitHubStubInstance;
-  });
+  this.createStatus = createStatus;
+  class OctokitRestStub {
+    constructor() {
+      this.apps = {
+        createInstallationToken: () => Promise.resolve({
+          data: {
+            token: "1"
+          }
+        })
+      };
+      this.repos = {
+        getContent: getContent,
+        createStatus: createStatus
+      };
+      this.authenticate = authenticate;
+    }
+  }
 
   class S3 {
     getObject() {
@@ -119,7 +120,7 @@ beforeEach(function () {
     'aws-sdk': {
       S3
     },
-    'github': this.GitHubApiStub,
+    '@octokit/rest': OctokitRestStub,
     'jsonwebtoken': {
       sign: () => {}
     }
@@ -133,8 +134,7 @@ describe('versioncheckr', () => {
     delete gitHubEvent.headers['X-GitHub-Event'];
     return this.myLambda.handler(gitHubEvent, {}, this.callback).then(() => {
       validateCallback(this.callback, 400, 'Missing X-GitHub-Event');
-      sinon.assert.notCalled(this.GitHubApiStub);
-      sinon.assert.notCalled(this.GitHubStubInstance.authenticate);
+      sinon.assert.notCalled(this.authenticate);
       sinon.assert.notCalled(this.getContent);
       sinon.assert.notCalled(this.createStatus);
     });
@@ -145,8 +145,7 @@ describe('versioncheckr', () => {
     delete gitHubEvent.headers['X-Hub-Signature'];
     return this.myLambda.handler(gitHubEvent, {}, this.callback).then(() => {
       validateCallback(this.callback, 400, 'Missing X-Hub-Signature');
-      sinon.assert.notCalled(this.GitHubApiStub);
-      sinon.assert.notCalled(this.GitHubStubInstance.authenticate);
+      sinon.assert.notCalled(this.authenticate);
       sinon.assert.notCalled(this.getContent);
       sinon.assert.notCalled(this.createStatus);
     });
@@ -161,8 +160,7 @@ describe('versioncheckr', () => {
     gitHubEvent.headers['X-Hub-Signature'] = `sha1=${hash}`;
     return this.myLambda.handler(gitHubEvent, {}, this.callback).then(() => {
       validateCallback(this.callback, 400, 'Invalid X-Hub-Signature');
-      sinon.assert.notCalled(this.GitHubApiStub);
-      sinon.assert.notCalled(this.GitHubStubInstance.authenticate);
+      sinon.assert.notCalled(this.authenticate);
       sinon.assert.notCalled(this.getContent);
       sinon.assert.notCalled(this.createStatus);
     });
@@ -176,8 +174,7 @@ describe('versioncheckr', () => {
     gitHubEvent.headers['X-Hub-Signature'] = `sha1=${hash}`;
     return this.myLambda.handler(gitHubEvent, {}, this.callback).then(() => {
       validateCallback(this.callback, 400, 'Invalid X-Hub-Signature');
-      sinon.assert.notCalled(this.GitHubApiStub);
-      sinon.assert.notCalled(this.GitHubStubInstance.authenticate);
+      sinon.assert.notCalled(this.authenticate);
       sinon.assert.notCalled(this.getContent);
       sinon.assert.notCalled(this.createStatus);
     });
@@ -191,19 +188,17 @@ describe('versioncheckr', () => {
     gitHubEvent.headers['X-Hub-Signature'] = `sha1=${hash}`;
     return this.myLambda.handler(gitHubEvent, {}, this.callback).then(() => {
       validateCallback(this.callback, 202);
-      sinon.assert.notCalled(this.GitHubApiStub);
-      sinon.assert.notCalled(this.GitHubStubInstance.authenticate);
+      sinon.assert.notCalled(this.authenticate);
       sinon.assert.notCalled(this.getContent);
       sinon.assert.notCalled(this.createStatus);
     });
   });
 
   it(`Authenticate throws error`, function () {
-    this.GitHubStubInstance.authenticate.withArgs(sinon.match.has("type", "token")).throws("AuthenticateError");
+    this.authenticate.withArgs(sinon.match.has("type", "token")).throws("AuthenticateError");
     return this.myLambda.handler(makeEvent('opened', 'pull_request'), {}, this.callback).then(() => {
       validateCallback(this.callback);
-      sinon.assert.calledWithNew(this.GitHubApiStub);
-      sinon.assert.called(this.GitHubStubInstance.authenticate);
+      sinon.assert.called(this.authenticate);
       sinon.assert.notCalled(this.getContent);
       sinon.assert.notCalled(this.createStatus);
     });
@@ -214,8 +209,7 @@ describe('versioncheckr', () => {
     this.getContent.rejects("GetContentError");
     return this.myLambda.handler(makeEvent('opened', 'pull_request'), {}, this.callback).then(() => {
       validateCallback(this.callback);
-      sinon.assert.calledWithNew(this.GitHubApiStub);
-      sinon.assert.calledTwice(this.GitHubStubInstance.authenticate);
+      sinon.assert.calledTwice(this.authenticate);
       sinon.assert.called(this.getContent);
       sinon.assert.notCalled(this.createStatus);
     });
@@ -225,15 +219,13 @@ describe('versioncheckr', () => {
     this.createStatus.rejects("CreateStatusError");
     return this.myLambda.handler(makeEvent('opened', 'pull_request'), {}, this.callback).then(() => {
       validateCallback(this.callback);
-      sinon.assert.calledWithNew(this.GitHubApiStub);
-      sinon.assert.calledTwice(this.GitHubStubInstance.authenticate);
+      sinon.assert.calledTwice(this.authenticate);
       sinon.assert.calledTwice(this.getContent);
       sinon.assert.calledOnce(this.createStatus);
     });
   });
 
-  [
-    {
+  [{
       event: 'pull_request',
       action: 'create'
     },
@@ -253,16 +245,14 @@ describe('versioncheckr', () => {
     it(`Ignore event=${data.event} with action=${data.action}`, function () {
       return this.myLambda.handler(makeEvent(data.action, data.event), {}, this.callback).then(() => {
         validateCallback(this.callback, 202, 'No action to take');
-        sinon.assert.notCalled(this.GitHubApiStub);
-        sinon.assert.notCalled(this.GitHubStubInstance.authenticate);
+        sinon.assert.notCalled(this.authenticate);
         sinon.assert.notCalled(this.getContent);
         sinon.assert.notCalled(this.createStatus);
       });
     });
   });
 
-  [
-    {
+  [{
       commentBody: '#version-checkr:skip',
       testing: 'basic'
     },
@@ -278,8 +268,7 @@ describe('versioncheckr', () => {
     it(`Skip comment ${data.testing}`, function () {
       return this.myLambda.handler(makeEvent('opened', 'pull_request', data.commentBody), {}, this.callback).then(() => {
         validateCallback(this.callback, 200, 'Skipped the version check');
-        sinon.assert.calledWithNew(this.GitHubApiStub);
-        sinon.assert.calledTwice(this.GitHubStubInstance.authenticate);
+        sinon.assert.calledTwice(this.authenticate);
         sinon.assert.notCalled(this.getContent);
         sinon.assert.calledOnce(this.createStatus);
         sinon.assert.calledWith(this.createStatus, sinon.match.has('state', 'success'));
@@ -287,8 +276,7 @@ describe('versioncheckr', () => {
     });
   });
 
-  [
-    {
+  [{
       commentBody: 'version-checkr:skip',
       testing: 'missing @'
     },
@@ -304,8 +292,7 @@ describe('versioncheckr', () => {
     it(`Do not skip comment ${data.testing}`, function () {
       return this.myLambda.handler(makeEvent('opened', 'pull_request', data.commentBody), {}, this.callback).then(() => {
         validateCallback(this.callback, 200);
-        sinon.assert.calledWithNew(this.GitHubApiStub);
-        sinon.assert.calledTwice(this.GitHubStubInstance.authenticate);
+        sinon.assert.calledTwice(this.authenticate);
         sinon.assert.calledTwice(this.getContent);
         sinon.assert.calledOnce(this.createStatus);
       });
@@ -321,8 +308,7 @@ describe('versioncheckr', () => {
     it(`Process pull request with action type ${gitHubAction}`, function () {
       return this.myLambda.handler(makeEvent(gitHubAction, 'pull_request'), {}, this.callback).then(() => {
         validateCallback(this.callback, 200);
-        sinon.assert.calledWithNew(this.GitHubApiStub);
-        sinon.assert.calledTwice(this.GitHubStubInstance.authenticate);
+        sinon.assert.calledTwice(this.authenticate);
         sinon.assert.calledTwice(this.getContent);
         sinon.assert.calledOnce(this.createStatus);
       });
@@ -333,16 +319,14 @@ describe('versioncheckr', () => {
     setVersion(this.getContent, "1.0.0", "1.0.1");
     return this.myLambda.handler(makeEvent('opened', 'pull_request'), {}, this.callback).then(() => {
       validateCallback(this.callback, 200, 'Version 1.0.1 will replace 1.0.0');
-      sinon.assert.calledWithNew(this.GitHubApiStub);
-      sinon.assert.calledTwice(this.GitHubStubInstance.authenticate);
+      sinon.assert.calledTwice(this.authenticate);
       sinon.assert.calledTwice(this.getContent);
       sinon.assert.calledOnce(this.createStatus);
       sinon.assert.calledWith(this.createStatus, sinon.match.has('state', 'success'));
     });
   });
 
-  [
-    {
+  [{
       oldVersion: '1.0.0',
       newVersion: '1.0.1',
       releaseType: 'patch',
@@ -472,8 +456,7 @@ describe('versioncheckr', () => {
       setVersion(this.getContent, data.oldVersion, data.newVersion);
       return this.myLambda.handler(event, {}, this.callback).then(() => {
         validateCallback(this.callback, 200, msg);
-        sinon.assert.calledWithNew(this.GitHubApiStub);
-        sinon.assert.calledTwice(this.GitHubStubInstance.authenticate);
+        sinon.assert.calledTwice(this.authenticate);
         sinon.assert.calledTwice(this.getContent);
         sinon.assert.calledOnce(this.createStatus);
         sinon.assert.calledWith(this.createStatus, sinon.match.has('state', data.isVersionHigher ? 'success' : 'failure'));
