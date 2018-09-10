@@ -1,6 +1,6 @@
 'use strict';
 
-const GitHubApi = require('github'),
+const GitHubApi = require('@octokit/rest'),
   AWS = require('aws-sdk'),
   jwt = require('jsonwebtoken'),
   semver = require('semver'),
@@ -53,16 +53,17 @@ function gitHubAuthenticate(appId, cert, installationId) {
 }
 
 function compareVersionsFromGitHub(github, owner, repo, baseSha, headSha, releaseType) {
-  const getContentParams = {
+  const getBaseContentParams = {
     owner: owner,
     repo: repo,
     ref: baseSha,
     path: 'package.json'
   };
-
-  const basePackageJson = github.repos.getContent(getContentParams);
-  getContentParams.ref = headSha;
-  const headPackageJson = github.repos.getContent(getContentParams);
+  const getHeadContentParams = Object.assign({}, getBaseContentParams, {
+    ref: headSha
+  });
+  const basePackageJson = github.repos.getContent(getBaseContentParams);
+  const headPackageJson = github.repos.getContent(getHeadContentParams);
 
   return Promise.all([basePackageJson, headPackageJson])
     .then(([baseFile, headFile]) => {
