@@ -11,48 +11,44 @@ function validateSignature(body, xHubSignature) {
   const bodySig = `sha1=${hmac.update(body).digest('hex')}`;
   const bufferBodySig = Buffer.from(bodySig, 'utf8');
   const bufferXHubSig = Buffer.from(xHubSignature, 'utf8');
-
   return crypto.timingSafeEqual(bufferBodySig, bufferXHubSig);
 }
 
-const privateKey = (() =>
-  new AWS.S3().getObject({
+const privateKey = (async () => {
+  const file = await new AWS.S3().getObject({
     Bucket: process.env.PEM_BUCKET_NAME,
     Key: process.env.PEM_KEY
-  }).promise()
-  .then(file => file.Body.toString('utf8'))
-)();
+  }).promise();
+  return file.Body.toString('utf8');
+})();
 
-function gitHubAuthenticate(appId, cert, installationId) {
+async function gitHubAuthenticate(appId, cert, installationId) {
   const github = new GitHubApi();
   const payload = {
     iat: Math.floor(new Date() / 1000),
     exp: Math.floor(new Date() / 1000) + 30,
     iss: appId
   };
+
   github.authenticate({
-    type: 'integration',
+    type: 'app',
     token: jwt.sign(payload, cert, {
       algorithm: 'RS256'
     })
   });
 
-  return github.apps.createInstallationToken({
-      installation_id: installationId
-    })
-    .then(res => {
-      github.authenticate({
-        type: 'token',
-        token: res.data.token
-      });
-      return github;
-    })
-    .catch(err => {
-      throw new Error(JSON.stringify(err));
-    });
+  const installationToken = await github.apps.createInstallationToken({
+    installation_id: installationId
+  });
+
+  github.authenticate({
+    type: 'token',
+    token: installationToken.data.token
+  });
+  return github;
 }
 
-function compareVersionsFromGitHub(github, owner, repo, baseSha, headSha, releaseType) {
+async function compareVersionsFromGitHub(github, owner, repo, baseSha, headSha, releaseType) {
   const getBaseContentParams = {
     owner: owner,
     repo: repo,
@@ -62,40 +58,52 @@ function compareVersionsFromGitHub(github, owner, repo, baseSha, headSha, releas
   const getHeadContentParams = Object.assign({}, getBaseContentParams, {
     ref: headSha
   });
-  const basePackageJson = github.repos.getContent(getBaseContentParams);
-  const headPackageJson = github.repos.getContent(getHeadContentParams);
+  const baseFile = await github.repos.getContent(getBaseContentParams);
+  const headFile = await github.repos.getContent(getHeadContentParams);
 
-  return Promise.all([basePackageJson, headPackageJson])
-    .then(([baseFile, headFile]) => {
-      const oldVersion = JSON.parse(new Buffer(baseFile.data.content, 'base64')).version;
-      const newVersion = JSON.parse(new Buffer(headFile.data.content, 'base64')).version
-      const oldVersionIncremented = semver.inc(oldVersion, releaseType);
-      const isNewer = semver.gte(newVersion, oldVersionIncremented);
-      const description = isNewer ?
-        `Version ${newVersion} will replace ${oldVersion}` : `Version ${newVersion} requires a ${releaseType} version number greater than ${oldVersion}`;
-      return {
-        github: github,
-        success: isNewer,
-        description: description
-      };
-    })
-    .catch(err => {
-      throw new Error(JSON.stringify(err));
-    });
+  const newVersionText = Buffer.from(headFile.data.content, 'base64').toString();
+  const newVersionSubString = newVersionText.substring(0, newVersionText.indexOf('"version"'));
+  const lineNumber = newVersionSubString.split('\n').length;
+  const oldVersion = JSON.parse(Buffer.from(baseFile.data.content, 'base64')).version;
+  const newVersion = JSON.parse(newVersionText).version
+  const oldVersionIncremented = semver.inc(oldVersion, releaseType);
+  const isNewer = semver.gte(newVersion, oldVersionIncremented);
+  const description = isNewer ?
+    `Version ${newVersion} will replace ${oldVersion}` : `Version ${newVersion} requires a ${releaseType} version number greater than ${oldVersion}`;
+
+  return {
+    success: isNewer,
+    description: description,
+    lineNumber: lineNumber
+  };
 }
 
-function postStatus(github, owner, repo, sha, success, description) {
-  return github.repos.createStatus({
-      owner: owner,
-      repo: repo,
-      sha: sha,
-      state: success ? 'success' : 'failure',
-      description: description,
-      context: 'Version Checkr'
-    })
-    .catch(err => {
-      throw new Error(JSON.stringify(err));
-    });
+function updateCheck(github, owner, repo, sha, success, description, lineNumber) {
+
+  let checkParams = {
+    owner: owner,
+    repo: repo,
+    name: 'Version Checkr',
+    head_sha: sha,
+    status: 'completed',
+    conclusion: success ? 'success' : 'failure',
+    completed_at: new Date().toISOString(),
+    output: {
+      title: success ? 'Success' : 'Failure',
+      summary: description
+    }
+  };
+  if (!success) {
+    checkParams.output.annotations = [{
+      path: 'package.json',
+      start_line: lineNumber,
+      end_line: lineNumber,
+      annotation_level: 'failure',
+      message: description
+    }];
+  }
+
+  return github.checks.create(checkParams);
 }
 
 function createResponse(statusCode, msg) {
@@ -108,60 +116,56 @@ function createResponse(statusCode, msg) {
   };
 }
 
-module.exports.handler = (event, context, callback) => {
+module.exports.handler = async (event, context, callback) => {
 
   const githubEvent = event.headers['X-GitHub-Event'];
   if (!githubEvent) {
-    return Promise.resolve(callback(null, createResponse(400, 'Missing X-GitHub-Event')));
+    return callback(null, createResponse(400, 'Missing X-GitHub-Event'));
   }
 
   const sig = event.headers['X-Hub-Signature'];
   if (!sig) {
-    return Promise.resolve(callback(null, createResponse(400, 'Missing X-Hub-Signature')));
+    return callback(null, createResponse(400, 'Missing X-Hub-Signature'));
   }
   if (!validateSignature(event.body, sig)) {
-    return Promise.resolve(callback(null, createResponse(400, 'Invalid X-Hub-Signature')));
+    return callback(null, createResponse(400, 'Invalid X-Hub-Signature'));
   }
 
-  const pullRequest = JSON.parse(event.body);
-
-  if (githubEvent !== 'pull_request' ||
-    !['opened', 'reopened', 'synchronize', 'edited'].includes(pullRequest.action)) {
-    return Promise.resolve(callback(null, createResponse(202, 'No action to take')));
+  const webHook = JSON.parse(event.body);
+  let baseSha, headSha, body;
+  if (githubEvent === 'check_suite' &&
+    (webHook.action === 'requested' || webHook.action === 'rerequested')) {
+    //TODO: why are pull_requests empty for requested action? Contacted GitHub support
+    baseSha = webHook.check_suite.pull_requests[0].base.sha;
+    headSha = webHook.check_suite.pull_requests[0].head.sha;
+    body = webHook.check_suite.pull_requests[0].body;
+  } else if (githubEvent === 'check_run' && webHook.action === 'rerequested') {
+    baseSha = webHook.check_run.check_suite.pull_requests[0].base.sha;
+    headSha = webHook.check_run.check_suite.pull_requests[0].head.sha;
+    body = webHook.check_run.check_suite.pull_requests[0].body;
+  } else {
+    return callback(null, createResponse(202, 'No action to take'));
   }
 
-  const installationId = pullRequest.installation.id;
-  const owner = pullRequest.repository.owner.login;
-  const repo = pullRequest.repository.name;
-  const baseSha = pullRequest.pull_request.base.sha;
-  const headSha = pullRequest.pull_request.head.sha;
-  const body = pullRequest.pull_request.body;
+  const installationId = webHook.installation.id;
+  const owner = webHook.repository.owner.login;
+  const repo = webHook.repository.name;
 
+  //TODO - how to get this info? Worth another request?
   let checking = 'patch';
   if (body) {
-    const match = /^#version[- ]?checke?r:\s?(skip|major|minor|patch)/im.exec(body);
+    const match = /^#version[- ]?checke?r:\s?(major|minor|patch)/im.exec(body);
     if (match !== null) {
       checking = match[1].toLowerCase();
     }
   }
 
-  let processEvent = Promise.resolve(privateKey)
-    .then(privateKey => gitHubAuthenticate(process.env.APP_ID, privateKey, installationId));
-
-  if (checking === 'skip') {
-    processEvent = processEvent
-      .then((github) => ({
-        github: github,
-        success: true,
-        description: 'Skipped the version check'
-      }));
-  } else {
-    processEvent = processEvent
-      .then(github => compareVersionsFromGitHub(github, owner, repo, baseSha, headSha, checking));
+  try {
+    const github = await gitHubAuthenticate(process.env.APP_ID, await privateKey, installationId);
+    const versionCheck = await compareVersionsFromGitHub(github, owner, repo, baseSha, headSha, checking);
+    const res = await updateCheck(github, owner, repo, headSha, versionCheck.success, versionCheck.description, versionCheck.lineNumber);
+    return callback(null, createResponse(200, res.data.output.summary));
+  } catch (e) {
+    return callback(e);
   }
-
-  return processEvent
-    .then(res => postStatus(res.github, owner, repo, headSha, res.success, res.description))
-    .then(res => callback(null, createResponse(200, res.data.description)))
-    .catch(err => callback(err));
-};
+}
