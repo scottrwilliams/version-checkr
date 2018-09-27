@@ -4,7 +4,8 @@ const GitHubApi = require('@octokit/rest'),
   AWS = require('aws-sdk'),
   jwt = require('jsonwebtoken'),
   semver = require('semver'),
-  crypto = require('crypto');
+  crypto = require('crypto'),
+  sleep = require('util').promisify(setTimeout);
 
 function validateSignature(body, xHubSignature) {
   const hmac = crypto.createHmac('sha1', process.env.WEBHOOK_SECRET);
@@ -48,11 +49,11 @@ async function gitHubAuthenticate(appId, cert, installationId) {
   return github;
 }
 
-async function compareVersionsFromGitHub(github, owner, repo, baseSha, headSha, releaseType) {
+async function compareVersionsFromGitHub(github, owner, repo, baseRef, headSha, releaseType) {
   const getBaseContentParams = {
-    owner: owner,
-    repo: repo,
-    ref: baseSha,
+    owner,
+    repo,
+    ref: baseRef,
     path: 'package.json'
   };
   const getHeadContentParams = Object.assign({}, getBaseContentParams, {
@@ -73,16 +74,16 @@ async function compareVersionsFromGitHub(github, owner, repo, baseSha, headSha, 
 
   return {
     success: isNewer,
-    description: description,
-    lineNumber: lineNumber
+    description,
+    lineNumber
   };
 }
 
 function updateCheck(github, owner, repo, sha, success, description, lineNumber) {
 
   let checkParams = {
-    owner: owner,
-    repo: repo,
+    owner,
+    repo,
     name: 'Version Checkr',
     head_sha: sha,
     status: 'completed',
@@ -108,7 +109,7 @@ function updateCheck(github, owner, repo, sha, success, description, lineNumber)
 
 function createResponse(statusCode, msg) {
   return {
-    statusCode: statusCode,
+    statusCode,
     headers: {
       'Content-Type': 'text/plain'
     },
@@ -132,15 +133,16 @@ module.exports.handler = async (event, context, callback) => {
   }
 
   const webHook = JSON.parse(event.body);
-  let baseSha, headSha, body;
+  let baseRef, headSha, body;
   if (githubEvent === 'check_suite' &&
     (webHook.action === 'requested' || webHook.action === 'rerequested')) {
-    //TODO: why are pull_requests empty for requested action? Contacted GitHub support
-    baseSha = webHook.check_suite.pull_requests[0].base.sha;
-    headSha = webHook.check_suite.pull_requests[0].head.sha;
-    body = webHook.check_suite.pull_requests[0].body;
+    if (webHook.check_suite.pull_requests.length > 0) {
+      baseRef = webHook.check_suite.pull_requests[0].base.ref;
+      headSha = webHook.check_suite.pull_requests[0].head.sha;
+      body = webHook.check_suite.pull_requests[0].body;
+    }
   } else if (githubEvent === 'check_run' && webHook.action === 'rerequested') {
-    baseSha = webHook.check_run.check_suite.pull_requests[0].base.sha;
+    baseRef = webHook.check_run.check_suite.pull_requests[0].base.ref;
     headSha = webHook.check_run.check_suite.pull_requests[0].head.sha;
     body = webHook.check_run.check_suite.pull_requests[0].body;
   } else {
@@ -162,7 +164,18 @@ module.exports.handler = async (event, context, callback) => {
 
   try {
     const github = await gitHubAuthenticate(process.env.APP_ID, await privateKey, installationId);
-    const versionCheck = await compareVersionsFromGitHub(github, owner, repo, baseSha, headSha, checking);
+    //handle open GitHub webhook issue where pull request info isn't always sent with first check_suite/requested
+    if (githubEvent === 'check_suite' && webHook.action === 'requested' &&
+      webHook.check_suite.pull_requests.length === 0) {
+      await sleep(5000);
+      await github.checks.rerequestSuite({
+        owner,
+        repo,
+        check_suite_id: webHook.check_suite.id
+      });
+      return callback(null, createResponse(202, 'Request did not conatin PR info'));
+    }
+    const versionCheck = await compareVersionsFromGitHub(github, owner, repo, baseRef, headSha, checking);
     const res = await updateCheck(github, owner, repo, headSha, versionCheck.success, versionCheck.description, versionCheck.lineNumber);
     return callback(null, createResponse(200, res.data.output.summary));
   } catch (e) {
