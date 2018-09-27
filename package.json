@@ -1,26 +1,26 @@
 {
   "name": "versioncheckr",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "GitHub App to check if NPM versions get bumped during pull requests",
+  "license": "MIT",
+  "author": "Scott Williams",
   "main": "versioncheckr.js",
   "scripts": {
+    "deploy": "sls deploy",
     "lint": "eslint .",
     "test": "nyc --reporter=lcov mocha",
-    "posttest": "nyc report && npm run lint",
-    "deploy": "sls deploy"
+    "posttest": "nyc report && npm run lint"
   },
-  "author": "Scott Williams",
-  "license": "MIT",
   "dependencies": {
-    "aws-sdk": "^2.311.0",
-    "@octokit/rest": "^15.11.1",
+    "@octokit/rest": "^15.12.1",
+    "aws-sdk": "^2.323.0",
     "jsonwebtoken": "^8.3.0",
     "semver": "^5.5.1",
-    "sinon": "^6.2.0"
+    "sinon": "^6.3.4"
   },
   "devDependencies": {
-    "chai": "^4.1.2",
-    "eslint": "^5.5.0",
+    "chai": "^4.2.0",
+    "eslint": "^5.6.0",
     "eslint-plugin-mocha": "^5.2.0",
     "mocha": "^5.2.0",
     "nyc": "^13.0.1",

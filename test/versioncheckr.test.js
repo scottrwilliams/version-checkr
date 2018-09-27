@@ -33,7 +33,7 @@ function makeEvent(action, eventType, commentBody = "") {
         sha: "headSha"
       },
       base: {
-        sha: "baseSha"
+        ref: "baseRef"
       },
       body: commentBody
     }]
@@ -63,7 +63,7 @@ function setVersion(getContentStub, oldVersion, newVersion) {
       content: new Buffer(`{"version": "${version}"}`).toString('base64')
     }
   });
-  getContentStub.withArgs(sinon.match.has("ref", "baseSha")).resolves(createContent(oldVersion));
+  getContentStub.withArgs(sinon.match.has("ref", "baseRef")).resolves(createContent(oldVersion));
   getContentStub.withArgs(sinon.match.has("ref", "headSha")).resolves(createContent(newVersion));
 }
 

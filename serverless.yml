@@ -20,7 +20,7 @@ package:
   exclude:
     - ".editorconfig"
     - ".eslintignore"
-    - ".eslintrc"
+    - ".eslintrc.yml"
     - "LICENSE"
     - "README.md"
     - ".nyc_output/**"
@@ -30,7 +30,7 @@ package:
 functions:
   versioncheckr:
     handler: versioncheckr.handler
-    memory: 128
+    memorysize: 1024
     environment:
       PEM_BUCKET_NAME:
         Ref: "configBucket"
