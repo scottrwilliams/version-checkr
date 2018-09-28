@@ -13,7 +13,8 @@ function createHash(secret, body) {
   return hmac.read();
 }
 
-function makeEvent(action, eventType, commentBody = "") {
+function makeEvent(action, eventType, commentBody = "", pullRequestIncluded = true) {
+
   const body = {
     action: action,
     installation: {
@@ -26,24 +27,33 @@ function makeEvent(action, eventType, commentBody = "") {
       }
     }
   };
-
-  const check_suite = {
-    pull_requests: [{
-      head: {
-        sha: "headSha"
-      },
-      base: {
-        ref: "baseRef"
-      },
-      body: commentBody
-    }]
+  const pull_request = {
+    head: {
+      sha: "headSha"
+    },
+    base: {
+      ref: "baseRef"
+    },
+    number: 123 //TODO: test this case
   };
-  if (eventType === 'check_suite') {
-    body.check_suite = check_suite;
-  } else if (eventType === 'check_run') {
-    body.check_run = {
-      check_suite: check_suite
+
+  if (eventType === 'pull_request') {
+    body.pull_request = pull_request;
+    body.pull_request.body = commentBody;
+  } else {
+    const check_suite = {
+      pull_requests: [pull_request]
     };
+    if (eventType === 'check_suite') {
+      body.check_suite = check_suite;
+      if (action === 'requested' && !pullRequestIncluded) {
+        body.check_suite.pull_requests = [];
+      }
+    } else if (eventType === 'check_run') {
+      body.check_run = {
+        check_suite: check_suite
+      };
+    }
   }
 
   const bodyString = JSON.stringify(body);
@@ -93,7 +103,7 @@ beforeEach(function () {
   const getContent = sinon.stub();
   this.getContent = getContent;
   setVersion(this.getContent, "1.0.0", "1.0.0");
-  const createCheck = sinon.stub().callsFake(async (status) => ({
+  const createCheck = sinon.stub().callsFake(status => ({
     data: {
       output: {
         summary: status.output.summary
@@ -101,10 +111,16 @@ beforeEach(function () {
     }
   }));
   this.createCheck = createCheck;
+  const getPullRequest = sinon.stub().callsFake(() => ({
+    data: {
+      body: 'My comment'
+    }
+  }));
+  this.getPullRequest = getPullRequest;
   class OctokitRestStub {
     constructor() {
       this.apps = {
-        createInstallationToken: async () => ({
+        createInstallationToken: () => ({
           data: {
             token: "1"
           }
@@ -116,6 +132,9 @@ beforeEach(function () {
       this.repos = {
         getContent: getContent
       };
+      this.pullRequests = {
+        get: getPullRequest
+      };
       this.authenticate = authenticate;
     }
   }
@@ -123,7 +142,7 @@ beforeEach(function () {
   class S3 {
     getObject() {
       return {
-        promise: async () => ({
+        promise: () => ({
           Body: 'cert'
         })
       };
@@ -151,6 +170,7 @@ describe('versioncheckr', () => {
     sinon.assert.notCalled(this.authenticate);
     sinon.assert.notCalled(this.getContent);
     sinon.assert.notCalled(this.createCheck);
+    sinon.assert.notCalled(this.getPullRequest);
   });
 
   it(`Missing X-Hub-Signature`, async function () {
@@ -161,6 +181,7 @@ describe('versioncheckr', () => {
     sinon.assert.notCalled(this.authenticate);
     sinon.assert.notCalled(this.getContent);
     sinon.assert.notCalled(this.createCheck);
+    sinon.assert.notCalled(this.getPullRequest);
   });
 
   it(`Invalid X-Hub-Signature`, async function () {
@@ -175,6 +196,7 @@ describe('versioncheckr', () => {
     sinon.assert.notCalled(this.authenticate);
     sinon.assert.notCalled(this.getContent);
     sinon.assert.notCalled(this.createCheck);
+    sinon.assert.notCalled(this.getPullRequest);
   });
 
   it(`Invalid secret for X-Hub-Signature`, async function () {
@@ -188,6 +210,7 @@ describe('versioncheckr', () => {
     sinon.assert.notCalled(this.authenticate);
     sinon.assert.notCalled(this.getContent);
     sinon.assert.notCalled(this.createCheck);
+    sinon.assert.notCalled(this.getPullRequest);
   });
 
   it(`Valid X-Hub-Signature`, async function () {
@@ -201,34 +224,48 @@ describe('versioncheckr', () => {
     sinon.assert.notCalled(this.authenticate);
     sinon.assert.notCalled(this.getContent);
     sinon.assert.notCalled(this.createCheck);
+    sinon.assert.notCalled(this.getPullRequest);
   });
 
   it(`Authenticate throws error`, async function () {
     this.authenticate.withArgs(sinon.match.has("type", "app")).throws("AuthenticateError");
-    await this.myLambda.handler(makeEvent('requested', 'check_suite'), {}, this.callback);
+    await this.myLambda.handler(makeEvent('rerequested', 'check_suite'), {}, this.callback);
     validateCallback(this.callback);
     sinon.assert.called(this.authenticate);
     sinon.assert.notCalled(this.getContent);
     sinon.assert.notCalled(this.createCheck);
+    sinon.assert.notCalled(this.getPullRequest);
   });
 
   it(`GetContent throws error`, async function () {
     this.getContent.reset();
     this.getContent.rejects("GetContentError");
-    await this.myLambda.handler(makeEvent('requested', 'check_suite'), {}, this.callback);
+    await this.myLambda.handler(makeEvent('rerequested', 'check_suite'), {}, this.callback);
     validateCallback(this.callback);
     sinon.assert.calledTwice(this.authenticate);
     sinon.assert.called(this.getContent);
     sinon.assert.notCalled(this.createCheck);
+    sinon.assert.notCalled(this.getPullRequest);
   });
 
   it(`CreateCheck throws error`, async function () {
     this.createCheck.rejects("CreateCheckError");
-    await this.myLambda.handler(makeEvent('requested', 'check_suite'), {}, this.callback);
+    await this.myLambda.handler(makeEvent('rerequested', 'check_suite'), {}, this.callback);
     validateCallback(this.callback);
     sinon.assert.calledTwice(this.authenticate);
     sinon.assert.calledTwice(this.getContent);
     sinon.assert.calledOnce(this.createCheck);
+    sinon.assert.calledOnce(this.getPullRequest);
+  });
+
+  it(`PullRequest.Get throws error`, async function () {
+    this.getPullRequest.rejects("PullRequestGetError");
+    await this.myLambda.handler(makeEvent('rerequested', 'check_suite'), {}, this.callback);
+    validateCallback(this.callback);
+    sinon.assert.calledTwice(this.authenticate);
+    sinon.assert.calledTwice(this.getContent);
+    sinon.assert.notCalled(this.createCheck);
+    sinon.assert.calledOnce(this.getPullRequest);
   });
 
   [{
@@ -240,12 +277,20 @@ describe('versioncheckr', () => {
       action: 'added'
     },
     {
+      event: 'check_run',
+      action: 'requested'
+    },
+    {
       event: 'release',
       action: 'published'
     },
     {
       event: 'organization',
       action: 'member_added'
+    },
+    {
+      event: 'pull_request',
+      action: 'reopened'
     }
   ].forEach((data) => {
     it(`Ignore event=${data.event} with action=${data.action}`, async function () {
@@ -254,30 +299,59 @@ describe('versioncheckr', () => {
       sinon.assert.notCalled(this.authenticate);
       sinon.assert.notCalled(this.getContent);
       sinon.assert.notCalled(this.createCheck);
+      sinon.assert.notCalled(this.getPullRequest);
     });
   });
 
-  [
-    'requested',
-    'rerequested'
-  ].forEach((gitHubAction) => {
-    it(`Process pull request with action type ${gitHubAction}`, async function () {
-      await this.myLambda.handler(makeEvent(gitHubAction, 'check_suite'), {}, this.callback);
+  it(`Ignore event=check_suite and action=requested when no PR info`, async function () {
+    await this.myLambda.handler(makeEvent('requested', 'check_suite', '', false), {}, this.callback);
+    validateCallback(this.callback, 202, 'Request did not conatin PR info');
+    sinon.assert.notCalled(this.authenticate);
+    sinon.assert.notCalled(this.getContent);
+    sinon.assert.notCalled(this.createCheck);
+    sinon.assert.notCalled(this.getPullRequest);
+  });
+
+  [{
+      event: 'pull_request',
+      action: 'opened'
+    },
+    {
+      event: 'check_suite',
+      action: 'requested'
+    },
+    {
+      event: 'check_suite',
+      action: 'rerequested'
+    },
+    {
+      event: 'check_run',
+      action: 'rerequested'
+    }
+  ].forEach((data) => {
+    it(`Process pull request with event=${data.event} and action=${data.action}`, async function () {
+      await this.myLambda.handler(makeEvent(data.action, data.event), {}, this.callback);
       validateCallback(this.callback, 200);
       sinon.assert.calledTwice(this.authenticate);
       sinon.assert.calledTwice(this.getContent);
       sinon.assert.calledOnce(this.createCheck);
+      if (data.event === 'pull_request') {
+        sinon.assert.notCalled(this.getPullRequest);
+      } else {
+        sinon.assert.calledOnce(this.getPullRequest);
+      }
     });
   });
 
   it(`Checking the patch version number by default with comment`, async function () {
     setVersion(this.getContent, "1.0.0", "1.0.1");
-    await this.myLambda.handler(makeEvent('requested', 'check_suite', 'My comment.'), {}, this.callback);
+    await this.myLambda.handler(makeEvent('rerequested', 'check_suite', 'My comment.'), {}, this.callback);
     validateCallback(this.callback, 200, 'Version 1.0.1 will replace 1.0.0');
     sinon.assert.calledTwice(this.authenticate);
     sinon.assert.calledTwice(this.getContent);
     sinon.assert.calledOnce(this.createCheck);
     sinon.assert.calledWith(this.createCheck, sinon.match.has('conclusion', 'success'));
+    sinon.assert.calledOnce(this.getPullRequest);
   });
 
   [{
@@ -401,18 +475,44 @@ describe('versioncheckr', () => {
       isVersionHigher: false
     }
   ].forEach((data) => {
-    ['check_suite', 'check_run'].forEach((eventType) => {
+    [{
+        event: 'pull_request',
+        action: 'opened'
+      },
+      {
+        event: 'check_suite',
+        action: 'requested'
+      },
+      {
+        event: 'check_suite',
+        action: 'rerequested'
+      },
+      {
+        event: 'check_run',
+        action: 'rerequested'
+      }
+    ].forEach((webHook) => {
       const msg = data.isVersionHigher ?
         `Version ${data.newVersion} will replace ${data.oldVersion}` : `Version ${data.newVersion} requires a ${data.releaseType} version number greater than ${data.oldVersion}`;
       const testTitle = data.isVersionHigher ? `${msg} (${data.releaseType} test)` : msg;
-      it(`${eventType}: ${testTitle}`, async function () {
+      it(`event=${webHook.event}, action=${webHook.action}: ${testTitle}`, async function () {
         const commentBody = `#version-checkr:${data.releaseType}`;
-        const event = makeEvent('rerequested', eventType, commentBody);
+        const event = makeEvent(webHook.action, webHook.event, commentBody);
+        this.getPullRequest.callsFake(() => ({
+          data: {
+            body: commentBody
+          }
+        }));
         setVersion(this.getContent, data.oldVersion, data.newVersion);
         await this.myLambda.handler(event, {}, this.callback);
         validateCallback(this.callback, 200, msg);
         sinon.assert.calledTwice(this.authenticate);
         sinon.assert.calledTwice(this.getContent);
+        if (webHook.event === 'pull_request') {
+          sinon.assert.notCalled(this.getPullRequest);
+        } else {
+          sinon.assert.calledOnce(this.getPullRequest);
+        }
         sinon.assert.calledOnce(this.createCheck);
         sinon.assert.calledWith(this.createCheck, sinon.match.has('conclusion', data.isVersionHigher ? 'success' : 'failure'));
       });
