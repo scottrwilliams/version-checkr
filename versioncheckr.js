@@ -4,8 +4,7 @@ const GitHubApi = require('@octokit/rest'),
   AWS = require('aws-sdk'),
   jwt = require('jsonwebtoken'),
   semver = require('semver'),
-  crypto = require('crypto'),
-  sleep = require('util').promisify(setTimeout);
+  crypto = require('crypto');
 
 function validateSignature(body, xHubSignature) {
   const hmac = crypto.createHmac('sha1', process.env.WEBHOOK_SECRET);
@@ -49,7 +48,7 @@ async function gitHubAuthenticate(appId, cert, installationId) {
   return github;
 }
 
-async function compareVersionsFromGitHub(github, owner, repo, baseRef, headSha, releaseType) {
+async function compareVersionsFromGitHub(github, owner, repo, baseRef, headSha, pullRequestNumber, body) {
   const getBaseContentParams = {
     owner,
     repo,
@@ -61,6 +60,24 @@ async function compareVersionsFromGitHub(github, owner, repo, baseRef, headSha, 
   });
   const baseFile = await github.repos.getContent(getBaseContentParams);
   const headFile = await github.repos.getContent(getHeadContentParams);
+
+  //check for comparison type from PR body
+  if (body === undefined) {
+    //need to fetch from PR since body doesn't come with check webhooks
+    const pullRequest = await github.pullRequests.get({
+      owner,
+      repo,
+      number: pullRequestNumber
+    });
+    body = pullRequest.data.body;
+  }
+  let releaseType = 'patch';
+  if (body) {
+    const match = /^#version[- ]?checke?r:\s?(major|minor|patch)/im.exec(body);
+    if (match !== null) {
+      releaseType = match[1].toLowerCase();
+    }
+  }
 
   const newVersionText = Buffer.from(headFile.data.content, 'base64').toString();
   const newVersionSubString = newVersionText.substring(0, newVersionText.indexOf('"version"'));
@@ -133,18 +150,26 @@ module.exports.handler = async (event, context, callback) => {
   }
 
   const webHook = JSON.parse(event.body);
-  let baseRef, headSha, body;
+  let baseRef, headSha, pullRequestNumber, body;
   if (githubEvent === 'check_suite' &&
     (webHook.action === 'requested' || webHook.action === 'rerequested')) {
     if (webHook.check_suite.pull_requests.length > 0) {
       baseRef = webHook.check_suite.pull_requests[0].base.ref;
       headSha = webHook.check_suite.pull_requests[0].head.sha;
-      body = webHook.check_suite.pull_requests[0].body;
+      pullRequestNumber = webHook.check_suite.pull_requests[0].number;
+    } else {
+      //wait until webhook notifies pull request is opened
+      return callback(null, createResponse(202, 'Request did not conatin PR info'));
     }
   } else if (githubEvent === 'check_run' && webHook.action === 'rerequested') {
     baseRef = webHook.check_run.check_suite.pull_requests[0].base.ref;
     headSha = webHook.check_run.check_suite.pull_requests[0].head.sha;
-    body = webHook.check_run.check_suite.pull_requests[0].body;
+    pullRequestNumber = webHook.check_run.check_suite.pull_requests[0].number;
+  } else if (githubEvent === 'pull_request' && webHook.action === 'opened') {
+    baseRef = webHook.pull_request.base.ref;
+    headSha = webHook.pull_request.head.sha;
+    pullRequestNumber = webHook.pull_request.number;
+    body = webHook.pull_request.body;
   } else {
     return callback(null, createResponse(202, 'No action to take'));
   }
@@ -153,29 +178,9 @@ module.exports.handler = async (event, context, callback) => {
   const owner = webHook.repository.owner.login;
   const repo = webHook.repository.name;
 
-  //TODO - how to get this info? Worth another request?
-  let checking = 'patch';
-  if (body) {
-    const match = /^#version[- ]?checke?r:\s?(major|minor|patch)/im.exec(body);
-    if (match !== null) {
-      checking = match[1].toLowerCase();
-    }
-  }
-
   try {
     const github = await gitHubAuthenticate(process.env.APP_ID, await privateKey, installationId);
-    //handle open GitHub webhook issue where pull request info isn't always sent with first check_suite/requested
-    if (githubEvent === 'check_suite' && webHook.action === 'requested' &&
-      webHook.check_suite.pull_requests.length === 0) {
-      await sleep(5000);
-      await github.checks.rerequestSuite({
-        owner,
-        repo,
-        check_suite_id: webHook.check_suite.id
-      });
-      return callback(null, createResponse(202, 'Request did not conatin PR info'));
-    }
-    const versionCheck = await compareVersionsFromGitHub(github, owner, repo, baseRef, headSha, checking);
+    const versionCheck = await compareVersionsFromGitHub(github, owner, repo, baseRef, headSha, pullRequestNumber, body);
     const res = await updateCheck(github, owner, repo, headSha, versionCheck.success, versionCheck.description, versionCheck.lineNumber);
     return callback(null, createResponse(200, res.data.output.summary));
   } catch (e) {
