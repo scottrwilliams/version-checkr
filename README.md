@@ -10,6 +10,7 @@ Creates a serverless endpoint for a GitHub App to check if NPM versions get bump
 5. Required App permissions & webhooks:
 * Set `Checks` permission to `Read & write`
 * Set `Single file` permission to `Read-only` and set the path to `package.json`
+* Set `Pull requests` permission to `Read-only`
 * Every other permission should be set to `No access`
 * Select only `Pull request` under `Subscribe to events`
 6. Save app and make note of the App Id
