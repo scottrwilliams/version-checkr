@@ -34,7 +34,7 @@ function makeEvent(action, eventType, commentBody = "", pullRequestIncluded = tr
     base: {
       ref: "baseRef"
     },
-    number: 123 //TODO: test this case
+    number: 123
   };
 
   if (eventType === 'pull_request') {
@@ -42,15 +42,14 @@ function makeEvent(action, eventType, commentBody = "", pullRequestIncluded = tr
     body.pull_request.body = commentBody;
   } else {
     const check_suite = {
-      pull_requests: [pull_request]
+      head_sha: "headSha",
+      pull_requests: pullRequestIncluded ? [pull_request] : []
     };
     if (eventType === 'check_suite') {
       body.check_suite = check_suite;
-      if (action === 'requested' && !pullRequestIncluded) {
-        body.check_suite.pull_requests = [];
-      }
     } else if (eventType === 'check_run') {
       body.check_run = {
+        head_sha: "headSha",
         check_suite: check_suite
       };
     }
@@ -290,7 +289,7 @@ describe('versioncheckr', () => {
     },
     {
       event: 'pull_request',
-      action: 'reopened'
+      action: 'closed'
     }
   ].forEach((data) => {
     it(`Ignore event=${data.event} with action=${data.action}`, async function () {
@@ -303,18 +302,36 @@ describe('versioncheckr', () => {
     });
   });
 
-  it(`Ignore event=check_suite and action=requested when no PR info`, async function () {
-    await this.myLambda.handler(makeEvent('requested', 'check_suite', '', false), {}, this.callback);
-    validateCallback(this.callback, 202, 'Request did not conatin PR info');
-    sinon.assert.notCalled(this.authenticate);
-    sinon.assert.notCalled(this.getContent);
-    sinon.assert.notCalled(this.createCheck);
-    sinon.assert.notCalled(this.getPullRequest);
+  [{
+      event: 'check_suite',
+      action: 'requested'
+    },
+    {
+      event: 'check_suite',
+      action: 'rerequested'
+    },
+    {
+      event: 'check_run',
+      action: 'rerequested'
+    }
+  ].forEach((data) => {
+    it(`Ignore event=${data.event} and action=${data.action} with no PR info`, async function () {
+      await this.myLambda.handler(makeEvent(data.action, data.event, '', false), {}, this.callback);
+      validateCallback(this.callback, 202, 'Commit is not part of a pull request, so version was not checked');
+      sinon.assert.calledTwice(this.authenticate);
+      sinon.assert.notCalled(this.getContent);
+      sinon.assert.calledOnce(this.createCheck);
+      sinon.assert.notCalled(this.getPullRequest);
+    })
   });
 
   [{
       event: 'pull_request',
       action: 'opened'
+    },
+    {
+      event: 'pull_request',
+      action: 'reopened'
     },
     {
       event: 'check_suite',
@@ -478,6 +495,10 @@ describe('versioncheckr', () => {
     [{
         event: 'pull_request',
         action: 'opened'
+      },
+      {
+        event: 'pull_request',
+        action: 'reopened'
       },
       {
         event: 'check_suite',
