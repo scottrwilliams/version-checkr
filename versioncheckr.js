@@ -49,6 +49,10 @@ async function gitHubAuthenticate(appId, cert, installationId) {
 }
 
 async function compareVersionsFromGitHub(github, owner, repo, baseRef, headSha, pullRequestNumber, body) {
+  if (!baseRef) {
+    return {};
+  }
+
   const getBaseContentParams = {
     owner,
     repo,
@@ -96,22 +100,33 @@ async function compareVersionsFromGitHub(github, owner, repo, baseRef, headSha, 
   };
 }
 
-function updateCheck(github, owner, repo, sha, success, description, lineNumber) {
+function updateCheck(github, owner, repo, baseRef, headSha, success, description, lineNumber) {
+
+  let conclusion, title, summary;
+  if (!baseRef) {
+    conclusion = 'neutral';
+    title = 'No PR to check';
+    summary = 'Commit is not part of a pull request, so version was not checked';
+  } else {
+    conclusion = success ? 'success' : 'failure';
+    title = success ? 'Success' : 'Failure';
+    summary = description;
+  }
 
   let checkParams = {
     owner,
     repo,
     name: 'Version Checkr',
-    head_sha: sha,
+    head_sha: headSha,
     status: 'completed',
-    conclusion: success ? 'success' : 'failure',
+    conclusion,
     completed_at: new Date().toISOString(),
     output: {
-      title: success ? 'Success' : 'Failure',
-      summary: description
+      title,
+      summary
     }
   };
-  if (!success) {
+  if (baseRef && !success) {
     checkParams.output.annotations = [{
       path: 'package.json',
       start_line: lineNumber,
@@ -150,24 +165,24 @@ module.exports.handler = async (event, context, callback) => {
   }
 
   const webHook = JSON.parse(event.body);
-  let baseRef, headSha, pullRequestNumber, body;
+  let headSha, baseRef, pullRequestNumber, body;
   if (githubEvent === 'check_suite' &&
     (webHook.action === 'requested' || webHook.action === 'rerequested')) {
+    headSha = webHook.check_suite.head_sha;
     if (webHook.check_suite.pull_requests.length > 0) {
       baseRef = webHook.check_suite.pull_requests[0].base.ref;
-      headSha = webHook.check_suite.pull_requests[0].head.sha;
       pullRequestNumber = webHook.check_suite.pull_requests[0].number;
-    } else {
-      //wait until webhook notifies pull request is opened
-      return callback(null, createResponse(202, 'Request did not conatin PR info'));
     }
   } else if (githubEvent === 'check_run' && webHook.action === 'rerequested') {
-    baseRef = webHook.check_run.check_suite.pull_requests[0].base.ref;
-    headSha = webHook.check_run.check_suite.pull_requests[0].head.sha;
-    pullRequestNumber = webHook.check_run.check_suite.pull_requests[0].number;
-  } else if (githubEvent === 'pull_request' && webHook.action === 'opened') {
-    baseRef = webHook.pull_request.base.ref;
+    headSha = webHook.check_run.head_sha;
+    if (webHook.check_run.check_suite.pull_requests.length > 0) {
+      baseRef = webHook.check_run.check_suite.pull_requests[0].base.ref;
+      pullRequestNumber = webHook.check_run.check_suite.pull_requests[0].number;
+    }
+  } else if (githubEvent === 'pull_request' &&
+    (webHook.action === 'opened' || webHook.action === 'reopened')) {
     headSha = webHook.pull_request.head.sha;
+    baseRef = webHook.pull_request.base.ref;
     pullRequestNumber = webHook.pull_request.number;
     body = webHook.pull_request.body;
   } else {
@@ -181,8 +196,8 @@ module.exports.handler = async (event, context, callback) => {
   try {
     const github = await gitHubAuthenticate(process.env.APP_ID, await privateKey, installationId);
     const versionCheck = await compareVersionsFromGitHub(github, owner, repo, baseRef, headSha, pullRequestNumber, body);
-    const res = await updateCheck(github, owner, repo, headSha, versionCheck.success, versionCheck.description, versionCheck.lineNumber);
-    return callback(null, createResponse(200, res.data.output.summary));
+    const res = await updateCheck(github, owner, repo, baseRef, headSha, versionCheck.success, versionCheck.description, versionCheck.lineNumber);
+    return callback(null, createResponse(baseRef ? 200 : 202, res.data.output.summary));
   } catch (e) {
     return callback(e);
   }
