@@ -16,16 +16,9 @@ provider:
               - "Ref" : "configBucket"
               - "/*"
 
-package:
-  exclude:
-    - ".editorconfig"
-    - ".eslintignore"
-    - ".eslintrc.yml"
-    - "LICENSE"
-    - "README.md"
-    - ".nyc_output/**"
-    - "coverage/**"
-    - "test/**"
+plugins:
+  - serverless-plugin-include-dependencies
+  - serverless-plugin-common-excludes
 
 functions:
   versioncheckr:

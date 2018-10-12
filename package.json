@@ -25,6 +25,8 @@
     "mocha": "^5.2.0",
     "nyc": "^13.0.1",
     "proxyquire": "^2.1.0",
-    "serverless": "^1.32.0"
+    "serverless": "^1.32.0",
+    "serverless-plugin-common-excludes": "^2.2.0",
+    "serverless-plugin-include-dependencies": "^3.1.1"
   }
 }
