@@ -11,12 +11,14 @@
     "test": "nyc --reporter=lcov mocha",
     "posttest": "nyc report && npm run lint"
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/scottrwilliams/version-checkr"
+  },
+  "homepage": "https://github.com/scottrwilliams/version-checkr",
   "dependencies": {
-    "@octokit/rest": "^15.13.1",
-    "aws-sdk": "^2.333.0",
-    "jsonwebtoken": "^8.3.0",
-    "semver": "^5.6.0",
-    "sinon": "^6.3.5"
+    "check-pull-request": "0.0.1",
+    "semver": "^5.6.0"
   },
   "devDependencies": {
     "chai": "^4.2.0",
@@ -27,6 +29,7 @@
     "proxyquire": "^2.1.0",
     "serverless": "^1.32.0",
     "serverless-plugin-common-excludes": "^2.2.0",
-    "serverless-plugin-include-dependencies": "^3.1.1"
+    "serverless-plugin-include-dependencies": "^3.1.1",
+    "sinon": "^6.3.5"
   }
 }
