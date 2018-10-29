@@ -165,36 +165,50 @@ module.exports.handler = async (event, context, callback) => {
   }
 
   const webHook = JSON.parse(event.body);
-  let headSha, baseRef, pullRequestNumber, body;
-  if (githubEvent === 'check_suite' &&
-    (webHook.action === 'requested' || webHook.action === 'rerequested')) {
-    headSha = webHook.check_suite.head_sha;
-    if (webHook.check_suite.pull_requests.length > 0) {
-      baseRef = webHook.check_suite.pull_requests[0].base.ref;
-      pullRequestNumber = webHook.check_suite.pull_requests[0].number;
-    }
-  } else if (githubEvent === 'check_run' && webHook.action === 'rerequested') {
-    headSha = webHook.check_run.head_sha;
-    if (webHook.check_run.check_suite.pull_requests.length > 0) {
-      baseRef = webHook.check_run.check_suite.pull_requests[0].base.ref;
-      pullRequestNumber = webHook.check_run.check_suite.pull_requests[0].number;
-    }
-  } else if (githubEvent === 'pull_request' &&
-    (webHook.action === 'opened' || webHook.action === 'reopened')) {
-    headSha = webHook.pull_request.head.sha;
-    baseRef = webHook.pull_request.base.ref;
-    pullRequestNumber = webHook.pull_request.number;
-    body = webHook.pull_request.body;
-  } else {
+  if (!((githubEvent === 'check_suite' && (webHook.action === 'requested' || webHook.action === 'rerequested')) ||
+      (githubEvent === 'check_run' && webHook.action === 'rerequested') ||
+      (githubEvent === 'pull_request' && (webHook.action === 'opened' || webHook.action === 'reopened')))) {
     return callback(null, createResponse(202, 'No action to take'));
   }
 
   const installationId = webHook.installation.id;
   const owner = webHook.repository.owner.login;
   const repo = webHook.repository.name;
+  let github;
+  try {
+    github = await gitHubAuthenticate(process.env.APP_ID, await privateKey, installationId);
+  } catch (e) {
+    return callback(e);
+  }
+
+  let headSha, baseRef, pullRequestNumber, body;
+  if (githubEvent === 'pull_request') {
+    headSha = webHook.pull_request.head.sha;
+    baseRef = webHook.pull_request.base.ref;
+    pullRequestNumber = webHook.pull_request.number;
+    body = webHook.pull_request.body;
+    //check if commit was flagged with "skip-checks: true"
+    const checks = github.checks.listSuitesForRef({
+      owner,
+      repo,
+      ref: headSha,
+      app_id: process.env.APP_ID
+    });
+    if (!checks.data.total_count) {
+      return callback(null, createResponse(202, 'Checks have been flagged to skip'));
+    }
+  } else {
+    if (githubEvent === 'check_run') {
+      webHook.check_suite = webHook.check_run.check_suite;
+    }
+    headSha = webHook.check_suite.head_sha;
+    if (webHook.check_suite.pull_requests.length > 0) {
+      baseRef = webHook.check_suite.pull_requests[0].base.ref;
+      pullRequestNumber = webHook.check_suite.pull_requests[0].number;
+    }
+  }
 
   try {
-    const github = await gitHubAuthenticate(process.env.APP_ID, await privateKey, installationId);
     const versionCheck = await compareVersionsFromGitHub(github, owner, repo, baseRef, headSha, pullRequestNumber, body);
     const res = await updateCheck(github, owner, repo, baseRef, headSha, versionCheck.success, versionCheck.description, versionCheck.lineNumber);
     return callback(null, createResponse(baseRef ? 200 : 202, res.data.output.summary));
