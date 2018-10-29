@@ -188,7 +188,7 @@ module.exports.handler = async (event, context, callback) => {
     pullRequestNumber = webHook.pull_request.number;
     body = webHook.pull_request.body;
     //check if commit was flagged with "skip-checks: true"
-    const checks = github.checks.listSuitesForRef({
+    const checks = await github.checks.listSuitesForRef({
       owner,
       repo,
       ref: headSha,
