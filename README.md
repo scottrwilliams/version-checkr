@@ -25,10 +25,6 @@ Creates a serverless endpoint for a GitHub App to check if NPM versions get bump
 
 Uses [GitHub Checks API](https://developer.github.com/v3/checks/) to show if the NPM version from pull request branch is greater than the version of the base branch.
 
-#### Skip checks
-
-Use `skip-checks: true`, as described [here](https://help.github.com/articles/about-status-checks/#skipping-and-requesting-checks-for-individual-commits)
-
 #### Evaluation modes
 
 Place the text `#version-checkr: <flag>` at the start of any line in the pull request description to set any of the flags below.
