@@ -167,19 +167,13 @@ module.exports.handler = async (event, context, callback) => {
   const webHook = JSON.parse(event.body);
   if (!((githubEvent === 'check_suite' && (webHook.action === 'requested' || webHook.action === 'rerequested')) ||
       (githubEvent === 'check_run' && webHook.action === 'rerequested') ||
-      (githubEvent === 'pull_request' && (webHook.action === 'opened' || webHook.action === 'reopened')))) {
+      (githubEvent === 'pull_request' && (webHook.action === 'opened' || webHook.action === 'reopened' || webHook.action === 'synchronize')))) {
     return callback(null, createResponse(202, 'No action to take'));
   }
 
   const installationId = webHook.installation.id;
   const owner = webHook.repository.owner.login;
   const repo = webHook.repository.name;
-  let github;
-  try {
-    github = await gitHubAuthenticate(process.env.APP_ID, await privateKey, installationId);
-  } catch (e) {
-    return callback(e);
-  }
 
   let headSha, baseRef, pullRequestNumber, body;
   if (githubEvent === 'pull_request') {
@@ -187,16 +181,6 @@ module.exports.handler = async (event, context, callback) => {
     baseRef = webHook.pull_request.base.ref;
     pullRequestNumber = webHook.pull_request.number;
     body = webHook.pull_request.body;
-    //check if commit was flagged with "skip-checks: true"
-    const checks = await github.checks.listSuitesForRef({
-      owner,
-      repo,
-      ref: headSha,
-      app_id: process.env.APP_ID
-    });
-    if (!checks.data.total_count) {
-      return callback(null, createResponse(202, 'Checks have been flagged to skip'));
-    }
   } else {
     if (githubEvent === 'check_run') {
       webHook.check_suite = webHook.check_run.check_suite;
@@ -209,6 +193,7 @@ module.exports.handler = async (event, context, callback) => {
   }
 
   try {
+    const github = await gitHubAuthenticate(process.env.APP_ID, await privateKey, installationId);
     const versionCheck = await compareVersionsFromGitHub(github, owner, repo, baseRef, headSha, pullRequestNumber, body);
     const res = await updateCheck(github, owner, repo, baseRef, headSha, versionCheck.success, versionCheck.description, versionCheck.lineNumber);
     return callback(null, createResponse(baseRef ? 200 : 202, res.data.output.summary));

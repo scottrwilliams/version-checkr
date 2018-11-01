@@ -116,12 +116,6 @@ beforeEach(function () {
     }
   }));
   this.getPullRequest = getPullRequest;
-  const listSuitesForRef = sinon.stub().callsFake(() => ({
-    data: {
-      total_count: 1
-    }
-  }));
-  this.listSuitesForRef = listSuitesForRef;
   class OctokitRestStub {
     constructor() {
       this.apps = {
@@ -132,8 +126,7 @@ beforeEach(function () {
         })
       };
       this.checks = {
-        create: createCheck,
-        listSuitesForRef
+        create: createCheck
       }
       this.repos = {
         getContent
@@ -274,20 +267,6 @@ describe('versioncheckr', () => {
     sinon.assert.calledOnce(this.getPullRequest);
   });
 
-  it('Skip check if there is no check suite', async function () {
-    this.listSuitesForRef.callsFake(() => ({
-      data: {
-        total_count: 0
-      }
-    }));
-    await this.myLambda.handler(makeEvent('opened', 'pull_request'), {}, this.callback);
-    validateCallback(this.callback, 202, 'Checks have been flagged to skip');
-    sinon.assert.calledTwice(this.authenticate);
-    sinon.assert.notCalled(this.getContent);
-    sinon.assert.notCalled(this.createCheck);
-    sinon.assert.notCalled(this.getPullRequest);
-  });
-
   [{
       event: 'check_suite',
       action: 'completed'
@@ -353,6 +332,10 @@ describe('versioncheckr', () => {
     {
       event: 'pull_request',
       action: 'reopened'
+    },
+    {
+      event: 'pull_request',
+      action: 'synchronize'
     },
     {
       event: 'check_suite',
@@ -522,6 +505,10 @@ describe('versioncheckr', () => {
         action: 'reopened'
       },
       {
+        event: 'pull_request',
+        action: 'synchronize'
+      },
+      {
         event: 'check_suite',
         action: 'requested'
       },
@@ -552,10 +539,8 @@ describe('versioncheckr', () => {
         sinon.assert.calledTwice(this.getContent);
         if (webHook.event === 'pull_request') {
           sinon.assert.notCalled(this.getPullRequest);
-          sinon.assert.calledOnce(this.listSuitesForRef);
         } else {
           sinon.assert.calledOnce(this.getPullRequest);
-          sinon.assert.notCalled(this.listSuitesForRef);
         }
         sinon.assert.calledOnce(this.createCheck);
         sinon.assert.calledWith(this.createCheck, sinon.match.has('conclusion', data.isVersionHigher ? 'success' : 'failure'));
